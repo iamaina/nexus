@@ -1,0 +1,55 @@
+package ingestion
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/ledongthuc/pdf"
+)
+
+// extractText is the single entry point for all supported files
+func extractText(path string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".pdf":
+		return extractPDFText(path)
+	case ".md", ".txt":
+		return extractMarkdownOrText(path)
+	default:
+		return "", fmt.Errorf("unsupported file type: %s", ext)
+	}
+}
+
+func extractPDFText(path string) (string, error) {
+	f, r, err := pdf.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var sb strings.Builder
+	for pageNum := 1; pageNum <= r.NumPage(); pageNum++ {
+		p := r.Page(pageNum)
+		text, err := p.GetPlainText(nil)
+		if err != nil {
+			log.Printf("Page %d: %v", pageNum, err)
+			continue
+		}
+		sb.WriteString(text)
+		sb.WriteString("\n\n") // page break
+	}
+
+	return sb.String(), nil
+}
+
+func extractMarkdownOrText(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
