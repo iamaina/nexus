@@ -1,0 +1,16 @@
+sources:
+  - name: books
+    path: ~/Documents/knowledge-drop
+    extensions:
+      - .pdf
+  - name: intelligence
+    path: ~/ops-nexus/intelligence
+    extensions:
+      - .md
+      - .txt
+      - .pdf
+postgres:
+  dsn: "postgres://vaultuser:${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"
+  connect_timeout: 5
+  max_open_conns: 10
+  max_idle_conns: 5
