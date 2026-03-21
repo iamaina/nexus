@@ -105,7 +105,7 @@ func New() (*Services, error) {
 		ALTER TABLE chunks 
 		ADD COLUMN IF NOT EXISTS embedding vector(768);
 	`)
-	
+
 	if err != nil {
 		logger.Error(ctx, "Failed to add embedding column", slog.Any("err", err))
 		return nil, err
