@@ -1,3 +1,4 @@
+// Package nexus contains the CLI commands for the nexus tool.
 package nexus
 
 import (
@@ -16,7 +17,7 @@ var force bool
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
 	Short: "Ingest documents from configured sources",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 
 		services, ok := ctx.Value("services").(*app.Services)

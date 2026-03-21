@@ -1,0 +1,35 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - errcheck
+    - misspell
+    - revive
+    - gosec
+    - unconvert
+
+linters-settings:
+  gosec:
+    excludes:
+      - G101   # We don't hardcode credentials
+  revive:
+    rules:
+      - name: exported
+        disabled: true   # Too noisy for small CLI
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
