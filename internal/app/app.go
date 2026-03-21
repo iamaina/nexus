@@ -31,6 +31,11 @@ type Services struct {
 	// Add more services later: Embedder, Retriever, etc.
 }
 
+type contextKey string
+
+// ServicesKey is the context key used to store the Services instance in command contexts.
+const ServicesKey contextKey = "services"
+
 // New initializes all services, including loading configuration, setting up logging, and connecting to the database.
 func New() (*Services, error) {
 	// 1. Logger first (bootstrapping)
@@ -59,7 +64,7 @@ func New() (*Services, error) {
 	}
 
 	logger.Info(ctx, "PostgreSQL connected successfully",
-		slog.String("dsn", config.C.Postgres.DSN))
+		slog.String("dsn", maskDSN(config.C.Postgres.DSN)))
 
 	// 4. Ensure tables
 	_, err = db.Exec(ctx, `
@@ -282,4 +287,11 @@ func (s *Services) Close() {
 	if s.DB != nil {
 		_ = s.DB.Close(context.Background())
 	}
+}
+
+func maskDSN(dsn string) string {
+	if idx := strings.Index(dsn, "@"); idx != -1 {
+		return dsn[:strings.Index(dsn, ":")+1] + "*****" + dsn[idx:]
+	}
+	return dsn
 }

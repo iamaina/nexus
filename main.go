@@ -14,10 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type contextKey string
-
-const servicesKey contextKey = "services"
-
 func main() {
 	services, err := app.New()
 	if err != nil {
@@ -28,7 +24,7 @@ func main() {
 
 	nexus.RootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		// Store in cmd context so subcommands can access it
-		cmd.SetContext(context.WithValue(cmd.Context(), servicesKey, services))
+		cmd.SetContext(context.WithValue(cmd.Context(), app.ServicesKey, services))
 		return nil
 	}
 
