@@ -3,11 +3,12 @@
 help:
 	@echo "nexus Makefile"
 	@echo ""
-	@echo "  make setup     → Interactive first-time setup"
-	@echo "  make lint      → Run golangci-lint"
-	@echo "  make build     → Build binary"
-	@echo "  make install   → Install to ~/.local/bin"
-	@echo "  make ingest    → Run ingestion"
+	@echo "  make bootstrap     → Install development tools"
+	@echo "  make setup         → Interactive first-time setup"
+	@echo "  make lint          → Run golangci-lint"
+	@echo "  make build         → Build binary"
+	@echo "  make install       → Install to ~/.local/bin"
+	@echo "  make ingest        → Run ingestion"
 	@echo "  make query     → Query the vault"
 	@echo "  make dev       → Switch to dev + lint"
 	@echo ""
@@ -30,7 +31,7 @@ setup:
 		exit 1; \
 	fi
 
-	# Sign in check
+	# op Sign in check
 	@if ! op whoami >/dev/null 2>&1; then \
 		echo "❌ You are not signed in to 1Password."; \
 		echo "   Please run this command first:"; \
@@ -148,8 +149,26 @@ dev:
 	git checkout dev
 	mise run lint
 
-clean:
-	rm -f nexus
-	@echo "Cleaned build artifacts"
+cleanup:
+	@echo "=== nexus full cleanup ==="
+	@echo "This will delete the database, role, config, and Ollama models."
+	@read -p "Are you sure? (Y/N): " confirm; \
+	if [ "$$confirm" != "Y" ] && [ "$$confirm" != "y" ]; then \
+		echo "Cancelled."; exit 1; \
+	fi
+
+	@echo "Dropping database and role..."
+	@psql -U $$(whoami) postgres -c "DROP DATABASE IF EXISTS opsnexus;" 2>/dev/null || true
+	@psql -U $$(whoami) postgres -c "DROP ROLE IF EXISTS vaultuser;" 2>/dev/null || true
+
+	@echo "Removing local files..."
+	@rm -f ~/.local/bin/nexus
+	@rm -f config.yaml
+
+	@echo "Removing Ollama models..."
+	@ollama rm nomic-embed-text 2>/dev/null || true
+	@ollama rm llama3.2 2>/dev/null || true
+
+	@echo "✅ Cleanup complete. You can now run 'make setup' for a fresh start."
 
 all: lint build
