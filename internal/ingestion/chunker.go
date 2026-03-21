@@ -1,15 +1,18 @@
+// Package ingestion provides utilities for chunking text for vectorization and embedding.
 package ingestion
 
 import (
 	"strings"
 )
 
+// DefaultChunkSize is the target size for text chunks, chosen to balance context length and embedding quality.
 const (
-	DefaultChunkSize    = 600   // characters; roughly 150–250 tokens for most models
-	DefaultChunkOverlap = 150   // context overlap to avoid cutting mid-sentence
-	MinChunkLength      = 50    // skip tiny fragments
+	DefaultChunkSize    = 600 // characters; roughly 150–250 tokens for most models
+	DefaultChunkOverlap = 150 // context overlap to avoid cutting mid-sentence
+	MinChunkLength      = 50  // skip tiny fragments
 )
 
+// ChunkText splits the input text into overlapping chunks based on the specified size and overlap parameters, trying to end chunks at natural boundaries when possible.
 func ChunkText(text string, size, overlap int) []string {
 	if size <= 0 {
 		size = DefaultChunkSize

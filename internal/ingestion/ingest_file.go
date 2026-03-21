@@ -1,3 +1,4 @@
+// Package ingestion provides utilities for ingesting and processing files.
 package ingestion
 
 import (
@@ -14,12 +15,16 @@ import (
 	"github.com/iamaina/nexus/internal/logger"
 )
 
-func computeFileHash(path string) (string, error) {
-	f, err := os.Open(path)
+func computeFileHash(ctx context.Context, path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // Safe: path comes from our configured sources
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			logger.Error(ctx, "Failed to close file", slog.String("path", path), slog.Any("err", err))
+		}
+	}()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
@@ -29,8 +34,9 @@ func computeFileHash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// IngestFile processes a single file: hash, dedup check, extract, chunk, store metadata and chunks.
 func IngestFile(ctx context.Context, services *app.Services, srcName, path string, force bool) (processed bool, err error) {
-	hash, err := computeFileHash(path)
+	hash, err := computeFileHash(ctx, path)
 	if err != nil {
 		logger.Error(ctx, "Failed to compute file hash", slog.String("path", path), slog.Any("err", err))
 		return false, err
@@ -67,7 +73,7 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 	logger.Info(ctx, "Chunked document",
 		slog.String("file", filepath.Base(path)),
 		slog.Int("chunk_count", len(chunks)),
-		slog.Int("avg_chunk_chars", charCount/max(1, len(chunks))),
+		slog.Int("avg_chunk_chars", charCount/intMax(1, len(chunks))),
 		slog.Int("total_chars", charCount))
 
 	docID, err := services.InsertDocument(ctx, srcName, path, hash, charCount, len(chunks))
@@ -102,7 +108,7 @@ func previewText(text string, maxLen int) string {
 	return text
 }
 
-func max(a, b int) int {
+func intMax(a, b int) int {
 	if a > b {
 		return a
 	}
