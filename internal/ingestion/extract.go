@@ -1,3 +1,4 @@
+// Package ingestion provides utilities for extracting text from various file formats.
 package ingestion
 
 import (
@@ -29,7 +30,11 @@ func extractPDFText(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("Warning: failed to close file: %v", err)
+		}
+	}()
 
 	var sb strings.Builder
 	for pageNum := 1; pageNum <= r.NumPage(); pageNum++ {
@@ -47,7 +52,7 @@ func extractPDFText(path string) (string, error) {
 }
 
 func extractMarkdownOrText(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // Safe: path comes from our configured sources
 	if err != nil {
 		return "", err
 	}

@@ -1,3 +1,4 @@
+// Package app provides the core application services and dependency management.
 package app
 
 import (
@@ -16,18 +17,21 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// Result represents a retrieved chunk of information relevant to a query.
 type Result struct {
 	File  string
 	Text  string
 	Score float64
 }
 
+// Services holds all the core services and resources of the application, such as configuration and database connections.
 type Services struct {
 	Config *config.Config
 	DB     *pgx.Conn
 	// Add more services later: Embedder, Retriever, etc.
 }
 
+// New initializes all services, including loading configuration, setting up logging, and connecting to the database.
 func New() (*Services, error) {
 	// 1. Logger first (bootstrapping)
 	logger.Init(*config.C.LogLevel)
@@ -96,6 +100,7 @@ func New() (*Services, error) {
 	}, nil
 }
 
+// InsertDocument inserts or updates a document's metadata in the database and returns its ID.
 func (s *Services) InsertDocument(ctx context.Context, source, path, hash string, charCount, chunkCount int) (int64, error) {
 	var id int64
 	err := s.DB.QueryRow(ctx,
@@ -121,6 +126,7 @@ func (s *Services) InsertDocument(ctx context.Context, source, path, hash string
 	return id, nil
 }
 
+// IsDocumentUpToDate checks if a document with the given file path and hash already exists in the database, indicating it has not changed since last ingestion.
 func (s *Services) IsDocumentUpToDate(ctx context.Context, filePath, currentHash string) (bool, error) {
 	var storedHash string
 	err := s.DB.QueryRow(ctx,
@@ -136,6 +142,7 @@ func (s *Services) IsDocumentUpToDate(ctx context.Context, filePath, currentHash
 	return storedHash == currentHash, nil
 }
 
+// StoreChunks inserts or updates the text chunks of a document in the database.
 func (s *Services) StoreChunks(ctx context.Context, docID int64, chunks []string) error {
 	for i, chunk := range chunks {
 		_, err := s.DB.Exec(ctx,
@@ -273,6 +280,6 @@ Answer:`, question, contextBuilder.String())
 // Close cleans up resources
 func (s *Services) Close() {
 	if s.DB != nil {
-		s.DB.Close(context.Background())
+		_ = s.DB.Close(context.Background())
 	}
 }
