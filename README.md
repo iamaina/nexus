@@ -1,146 +1,101 @@
 # nexus
 
-Personal local knowledge vault with RAG (Retrieval-Augmented Generation).
+**Your personal local knowledge vault** — fully offline RAG for PDFs, Markdown, and text.
 
-Built for SREs and power users who want full control over their knowledge base — no cloud, no subscriptions, no data leaving your machine.
+Built for SREs who want complete control: no cloud, no subscriptions, no data leaving your machine.
+
+## Quick Start
+
+```bash
+make setup
+make ingest
+make query question="What is the staging area in Git?"
+```
 
 ## Features
 
 - Ingestion from PDFs, Markdown, and plain text
-- Automatic deduplication
+- Automatic deduplication (by content hash)
 - Local embeddings using `nomic-embed-text`
 - Semantic search + summarization with `llama3.2`
-- Fully offline after initial setup
+- Everything runs on your laptop
 
 ---
 
-## Prerequisites
+## Full Installation
 
-- macOS (Homebrew)
-- [Ollama](https://ollama.com) (for embeddings and summarization)
-- PostgreSQL 14 (via Homebrew)
-
----
-
-## 1. Install Ollama
-
-```bash
-# Install Ollama
-brew install ollama
-
-# Start the service
-brew services start ollama
-
-# Pull required models
-ollama pull nomic-embed-text
-ollama pull llama3.2
-```
-
-Keep `ollama serve` running in the background. (This can be automated)
-
-## 2. Setup PostgreSQL + pgvector
-
-### A. Create Database and User
+### 1. Bootstrap tools (once)
 
 ```Bash
-brew install postgresql
-brew services restart postgresql
-psql -U <root_username> postgres -c "CREATE ROLE <preferred_username> WITH LOGIN PASSWORD 'password' CREATEDB;"
-createdb -U anganga -O <your user> opsnexus
+make bootstrap
 ```
 
-### B. Install pgvector
+#### 2. Full setup (database + config + models)
 
 ```bash
-brew install pgvector
-brew services restart postgresql
+make setup
 ```
 
-#### Then enable the extension
+This will:
+
+- Start `PostgreSQL`
+- Create the `opsnexus` database and `vaultuser`
+- Install `pgvector`
+- Pull Ollama models
+- Ask you for your document folders and generate `config.yaml`
+
+#### 3. First ingestion
 
 ```bash
-psql -U preferred_username -d opsnexus -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-### If you are stuck on PostgreSQL@14 (common case)
-
-you can get this error:
-
-```text
-ERROR: could not access file "$libdir/vector": No such file or directory
-```
-
-This happens because `brew install pgvector` builds against whatever PostgreSQL version Homebrew considers “current”
-
-So:
-
-- `brew` installs `vector.so` into something like:
-
-    `/opt/homebrew/Cellar/postgresql@17/...`
-
-- But your Postgres@14 is 14, is in:
-
-  `/opt/homebrew/Cellar/postgresql@14/...`
-
-#### Use the manual installation method
-
-```Bash
-git clone https://github.com/pgvector/pgvector.git
-cd pgvector
-
-# Important: Use your PostgreSQL@14 path
-export PATH="/opt/homebrew/opt/postgresql@14/bin:$PATH"
-
-make
-sudo make install
-
-brew services restart postgresql@14
-
-# Then enable the extension:
-SQLCREATE EXTENSION IF NOT EXISTS vector;
-```
-
-## 3. Install nexus
-
-```bash
-git clone https://github.com/iamaina/nexus.git
-cd nexus
-
-go build -o ~/.local/bin/nexus ./...
-```
-
-Add to PATH (if not already):
-
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-## 4. Configuration
-
-Copy the example config:
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-Edit `config.yaml` with your paths.
-
-## 5. First Ingestion
-
-```Bash
-nexus ingest
+make ingest
 ```
 
 Use `--force` to re-process everything:
 
-```Bash
-nexus ingest --force
+```bash
+make ingest force=1
 ```
 
-## Basic Usage
+#### 4. Query your knowledge
 
-```Bash
-nexus query "What is the staging area in Git?"
-nexus query "How does Git store commits as snapshots?" --threshold 0.7
+```bash
+make query question="What is the staging area in Git?"
 ```
+
+---
+
+## Project Structure
+
+```bash
+nexus/
+├── cmd
+│   └── nexus
+│       ├── ingest.go
+│       ├── query.go
+│       └── root.go
+├── internal
+│   ├── app
+│   │   └── app.go
+│   ├── config
+│   │   └── config.go
+│   ├── ingestion
+│   │   ├── chunker.go
+│   │   ├── extract.go
+│   │   └── ingest_file.go
+│   └──logger
+│       └── logger.go
+├── main.go
+├── Makefile
+└──  README.md
+```
+
+## Common Commands
+
+| Command | Description |
+| ------- | ----------- |
+| `make setup` | Full first-time setup |
+| `make ingest` | Ingest all documents |
+| `make query question="..."` | Ask a question |
+| `make lint` | Run linter |
+| `make build` | Build the binary |
+| `make cleanup` | Delete DB + config (fresh start) |

@@ -99,6 +99,18 @@ func New() (*Services, error) {
 		return nil, err
 	}
 
+	// 6. embedding column (if not exists)
+	// Ensure embedding column exists
+	_, err = db.Exec(ctx, `
+		ALTER TABLE chunks 
+		ADD COLUMN IF NOT EXISTS embedding vector(768);
+	`)
+	
+	if err != nil {
+		logger.Error(ctx, "Failed to add embedding column", slog.Any("err", err))
+		return nil, err
+	}
+
 	return &Services{
 		Config: &config.C,
 		DB:     db,
