@@ -22,7 +22,7 @@ var queryCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		services, ok := ctx.Value("services").(*app.Services)
+		services, ok := ctx.Value(app.ServicesKey).(*app.Services)
 		if !ok {
 			logger.Error(ctx, "Services not found")
 			return
