@@ -1,3 +1,4 @@
+// Package nexus contains the CLI commands for the nexus tool.
 package nexus
 
 import (
@@ -21,7 +22,7 @@ var queryCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		services, ok := ctx.Value("services").(*app.Services)
+		services, ok := ctx.Value(app.ServicesKey).(*app.Services)
 		if !ok {
 			logger.Error(ctx, "Services not found")
 			return
@@ -82,7 +83,10 @@ var queryCmd = &cobra.Command{
 
 		for rows.Next() {
 			var r app.Result
-			rows.Scan(&r.File, &r.Text, &r.Score)
+			if err := rows.Scan(&r.File, &r.Text, &r.Score); err != nil {
+				logger.Error(ctx, "Failed to scan row", slog.Any("err", err))
+				continue
+			}
 			if r.Score >= threshold {
 				results = append(results, r)
 			}

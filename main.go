@@ -1,3 +1,4 @@
+// Package main is the entry point for the nexus CLI.
 package main
 
 import (
@@ -21,9 +22,9 @@ func main() {
 	}
 	defer services.Close()
 
-	nexus.RootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+	nexus.RootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		// Store in cmd context so subcommands can access it
-		cmd.SetContext(context.WithValue(cmd.Context(), "services", services))
+		cmd.SetContext(context.WithValue(cmd.Context(), app.ServicesKey, services))
 		return nil
 	}
 
