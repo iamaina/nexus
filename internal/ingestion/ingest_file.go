@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"log/slog"
 
 	"github.com/iamaina/nexus/internal/app"
 	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/parser"
 )
 
 func computeFileHash(ctx context.Context, path string) (string, error) {
@@ -68,10 +70,42 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		slog.String("file", filepath.Base(path)),
 		slog.Int("chars", charCount))
 
-	chunks := ChunkText(text, 0, 0)
+	toc := parser.ExtractTOC(text)
+
+	cleanText := text
+	pageOffset := 0
+	tocEnd := findTOCEnd(text)
+
+	if tocEnd != -1 {
+		before := text[:tocEnd]
+		pageOffset = len(parser.SplitPages(before))
+		cleanText = text[tocEnd:]
+	}
+
+	pages := parser.SplitPages(cleanText)
+
+	var chunks []string
+	var enriched []app.EnrichedChunk
+
+	for i, pageText := range pages {
+		pageNum := i + 1 + pageOffset
+		chapter := parser.AssignChapter(pageNum, toc)
+
+		pageChunks := ChunkText(pageText, 0, 0)
+
+		for _, c := range pageChunks {
+			chunks = append(chunks, c)
+
+			enriched = append(enriched, app.EnrichedChunk{
+				Text:    c,
+				Chapter: chapter,
+			})
+		}
+	}
 
 	logger.Info(ctx, "Chunked document",
 		slog.String("file", filepath.Base(path)),
+		slog.Int("toc_entries", len(toc)),
 		slog.Int("chunk_count", len(chunks)),
 		slog.Int("avg_chunk_chars", charCount/intMax(1, len(chunks))),
 		slog.Int("total_chars", charCount))
@@ -82,7 +116,7 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		return false, err
 	}
 
-	err = services.StoreChunks(ctx, docID, chunks)
+	err = services.StoreChunks(ctx, docID, enriched)
 	if err != nil {
 		logger.Error(ctx, "Chunk storage failed", slog.Any("err", err))
 		return false, err
@@ -99,6 +133,21 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		slog.String("preview", previewText(text, 300)))
 
 	return true, nil
+}
+
+func findTOCEnd(text string) int {
+	lines := strings.Split(text, "\n")
+
+	for i := 0; i < len(lines)-2; i++ {
+		line := strings.TrimSpace(lines[i])
+
+		// Detect real paragraph (not TOC)
+		if len(line) > 80 && !strings.Contains(line, ". .") {
+			return strings.Index(text, line)
+		}
+	}
+
+	return -1
 }
 
 func previewText(text string, maxLen int) string {
