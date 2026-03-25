@@ -1,17 +1,19 @@
-// Extracts the table of contents from the text. It looks for lines that match the pattern of a title followed by dots and a page number.
-package parser
+// Package parser contains functions for processing and extracting structured information from raw text documents, such as splitting text into pages and extracting table of contents entries.
+package parser //nolint:revive
 
 import (
 	"strconv"
 	"strings"
 )
 
+// TOCEntry represents a single entry in the table of contents, including the title, page number, and hierarchy level.
 type TOCEntry struct {
 	Title string
 	Page  int
 	Level int
 }
 
+// ExtractTOC takes the full text of a document and attempts to extract the table of contents (TOC) entries. It looks for lines that contain a title followed by dots and a page number, while applying various heuristics to filter out noise and irrelevant lines.
 func ExtractTOC(text string) []TOCEntry {
 	start := strings.Index(text, "Table of Contents")
 	if start == -1 {
@@ -114,11 +116,4 @@ func isNoise(title string) bool {
 		}
 	}
 	return false
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
