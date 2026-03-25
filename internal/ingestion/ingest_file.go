@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -88,16 +87,6 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 	var chunks []string
 	var enriched []app.EnrichedChunk
 
-	fmt.Println("DEBUG TOC:")
-	for _, t := range toc {
-		fmt.Printf(" - %s → %d\n", t.Title, t.Page)
-	}
-
-	fmt.Println("DEBUG PAGES:")
-	for i := 0; i < 5; i++ {
-		fmt.Printf("Chunk page: %d\n", i+1+pageOffset)
-	}
-
 	for i, pageText := range pages {
 		pageNum := i + 1 + pageOffset
 		chapter := parser.AssignChapter(pageNum, toc)
@@ -114,28 +103,9 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		}
 	}
 
-	fmt.Println("\n🔎 DEBUG: Sample chunks with chapters")
-
-	limit := 10
-	if len(enriched) < limit {
-		limit = len(enriched)
-	}
-
-	for i := 0; i < limit; i++ {
-		fmt.Printf("%2d. [%s]\n", i+1, enriched[i].Chapter)
-
-		preview := enriched[i].Text
-		if len(preview) > 120 {
-			preview = preview[:120] + "..."
-		}
-
-		fmt.Printf("    %s\n\n", preview)
-	}
-
-	fmt.Printf("📚 TOC entries found: %d\n", len(toc))
-
 	logger.Info(ctx, "Chunked document",
 		slog.String("file", filepath.Base(path)),
+		slog.Int("toc_entries", len(toc)),
 		slog.Int("chunk_count", len(chunks)),
 		slog.Int("avg_chunk_chars", charCount/intMax(1, len(chunks))),
 		slog.Int("total_chars", charCount))

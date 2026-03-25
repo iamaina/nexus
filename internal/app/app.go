@@ -31,7 +31,7 @@ type Services struct {
 	// Add more services later: Embedder, Retriever, etc.
 }
 
-// Chunk represents a piece of text along with its associated chapter (if any).
+// EnrichedChunk represents a piece of text along with its associated chapter.
 type EnrichedChunk struct {
 	Text    string
 	Chapter string

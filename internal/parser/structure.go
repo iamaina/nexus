@@ -1,6 +1,7 @@
-// Extracts the structure of the document from the text. It looks for headings and their corresponding content.
-package parser
+// Package parser contains functions for assigning chapters to pages based on a table of contents.
+package parser //nolint:revive
 
+// AssignChapter takes a page number and a table of contents (TOC) and returns the chapter title that corresponds to that page. It iterates through the TOC entries to find the correct chapter based on the page number.
 func AssignChapter(page int, toc []TOCEntry) string {
 	current := "Unknown"
 
