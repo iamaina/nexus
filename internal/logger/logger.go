@@ -44,7 +44,7 @@ func Init(levelStr string) {
 	// Optional: add default attrs (e.g. app name, version)
 	Logger = Logger.With(
 		slog.String("app", "nexus"),
-		slog.String("version", "0.1.0-dev"),
+		slog.String("version", "0.2.0-dev"),
 	)
 }
 
