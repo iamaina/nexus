@@ -72,18 +72,34 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		slog.Int("chars", charCount))
 
 	toc := parser.ExtractTOC(text)
+
 	cleanText := text
-	tocEnd := strings.Index(cleanText, "Introduction")
+	pageOffset := 0
+	tocEnd := findTOCEnd(text)
+
 	if tocEnd != -1 {
-		cleanText = cleanText[tocEnd:]
+		before := text[:tocEnd]
+		pageOffset = len(parser.SplitPages(before))
+		cleanText = text[tocEnd:]
 	}
+
 	pages := parser.SplitPages(cleanText)
 
 	var chunks []string
-	var enriched []EnrichedChunk
+	var enriched []app.EnrichedChunk
+
+	fmt.Println("DEBUG TOC:")
+	for _, t := range toc {
+		fmt.Printf(" - %s → %d\n", t.Title, t.Page)
+	}
+
+	fmt.Println("DEBUG PAGES:")
+	for i := 0; i < 5; i++ {
+		fmt.Printf("Chunk page: %d\n", i+1+pageOffset)
+	}
 
 	for i, pageText := range pages {
-		pageNum := i + 1
+		pageNum := i + 1 + pageOffset
 		chapter := parser.AssignChapter(pageNum, toc)
 
 		pageChunks := ChunkText(pageText, 0, 0)
@@ -91,7 +107,7 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		for _, c := range pageChunks {
 			chunks = append(chunks, c)
 
-			enriched = append(enriched, EnrichedChunk{
+			enriched = append(enriched, app.EnrichedChunk{
 				Text:    c,
 				Chapter: chapter,
 			})
@@ -130,7 +146,7 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		return false, err
 	}
 
-	err = services.StoreChunks(ctx, docID, chunks)
+	err = services.StoreChunks(ctx, docID, enriched)
 	if err != nil {
 		logger.Error(ctx, "Chunk storage failed", slog.Any("err", err))
 		return false, err
@@ -147,6 +163,21 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		slog.String("preview", previewText(text, 300)))
 
 	return true, nil
+}
+
+func findTOCEnd(text string) int {
+	lines := strings.Split(text, "\n")
+
+	for i := 0; i < len(lines)-2; i++ {
+		line := strings.TrimSpace(lines[i])
+
+		// Detect real paragraph (not TOC)
+		if len(line) > 80 && !strings.Contains(line, ". .") {
+			return strings.Index(text, line)
+		}
+	}
+
+	return -1
 }
 
 func previewText(text string, maxLen int) string {
