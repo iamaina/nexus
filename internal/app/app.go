@@ -31,6 +31,12 @@ type Services struct {
 	// Add more services later: Embedder, Retriever, etc.
 }
 
+// Chunk represents a piece of text along with its associated chapter (if any).
+type EnrichedChunk struct {
+	Text    string
+	Chapter string
+}
+
 type contextKey string
 
 // ServicesKey is the context key used to store the Services instance in command contexts.
@@ -90,6 +96,7 @@ func New() (*Services, error) {
 			document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
 			chunk_index INTEGER NOT NULL,
 			chunk_text TEXT NOT NULL,
+			chapter TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE (document_id, chunk_index)
 		);
@@ -160,14 +167,14 @@ func (s *Services) IsDocumentUpToDate(ctx context.Context, filePath, currentHash
 }
 
 // StoreChunks inserts or updates the text chunks of a document in the database.
-func (s *Services) StoreChunks(ctx context.Context, docID int64, chunks []string) error {
+func (s *Services) StoreChunks(ctx context.Context, docID int64, chunks []EnrichedChunk) error {
 	for i, chunk := range chunks {
 		_, err := s.DB.Exec(ctx,
-			`INSERT INTO chunks (document_id, chunk_index, chunk_text)
-             VALUES ($1, $2, $3)
+			`INSERT INTO chunks (document_id, chunk_index, chunk_text,chapter)
+             VALUES ($1, $2, $3, $4)
              ON CONFLICT (document_id, chunk_index) DO UPDATE SET
                  chunk_text = EXCLUDED.chunk_text`,
-			docID, i, chunk,
+			docID, i, chunk.Text, chunk.Chapter,
 		)
 		if err != nil {
 			logger.Error(ctx, "Chunk insert failed",

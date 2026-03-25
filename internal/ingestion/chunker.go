@@ -12,12 +12,6 @@ const (
 	MinChunkLength      = 50  // skip tiny fragments
 )
 
-// Chunk represents a piece of text along with its associated chapter (if any).
-type EnrichedChunk struct {
-	Text    string
-	Chapter string
-}
-
 // ChunkText splits the input text into overlapping chunks based on the specified size and overlap parameters, trying to end chunks at natural boundaries when possible.
 func ChunkText(text string, size, overlap int) []string {
 	if size <= 0 {
