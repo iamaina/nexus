@@ -5,14 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"log/slog"
 
 	"github.com/iamaina/nexus/internal/app"
 	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/parser"
 )
 
 func computeFileHash(ctx context.Context, path string) (string, error) {
@@ -68,7 +71,52 @@ func IngestFile(ctx context.Context, services *app.Services, srcName, path strin
 		slog.String("file", filepath.Base(path)),
 		slog.Int("chars", charCount))
 
-	chunks := ChunkText(text, 0, 0)
+	toc := parser.ExtractTOC(text)
+	cleanText := text
+	tocEnd := strings.Index(cleanText, "Introduction")
+	if tocEnd != -1 {
+		cleanText = cleanText[tocEnd:]
+	}
+	pages := parser.SplitPages(cleanText)
+
+	var chunks []string
+	var enriched []EnrichedChunk
+
+	for i, pageText := range pages {
+		pageNum := i + 1
+		chapter := parser.AssignChapter(pageNum, toc)
+
+		pageChunks := ChunkText(pageText, 0, 0)
+
+		for _, c := range pageChunks {
+			chunks = append(chunks, c)
+
+			enriched = append(enriched, EnrichedChunk{
+				Text:    c,
+				Chapter: chapter,
+			})
+		}
+	}
+
+	fmt.Println("\n🔎 DEBUG: Sample chunks with chapters")
+
+	limit := 10
+	if len(enriched) < limit {
+		limit = len(enriched)
+	}
+
+	for i := 0; i < limit; i++ {
+		fmt.Printf("%2d. [%s]\n", i+1, enriched[i].Chapter)
+
+		preview := enriched[i].Text
+		if len(preview) > 120 {
+			preview = preview[:120] + "..."
+		}
+
+		fmt.Printf("    %s\n\n", preview)
+	}
+
+	fmt.Printf("📚 TOC entries found: %d\n", len(toc))
 
 	logger.Info(ctx, "Chunked document",
 		slog.String("file", filepath.Base(path)),
