@@ -45,7 +45,7 @@ func extractPDFText(path string) (string, error) {
 			continue
 		}
 		sb.WriteString(text)
-		sb.WriteString("\n\n") // page break
+		sb.WriteString("\n\f\n") // page break
 	}
 
 	return sb.String(), nil
