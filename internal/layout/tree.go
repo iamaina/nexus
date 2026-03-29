@@ -70,21 +70,25 @@ func BuildHeadingTree(headings []Heading) []*Node {
 	return roots
 }
 
-func PrintTree(nodes []*Node, indent int) {
+func PrintTree(nodes []*Node, indent, startPage, endPage int) {
 	for _, n := range nodes {
-		if n.Heading.Page > 0 && n.Heading.Page <= 20 {
-			fmt.Printf("%s- %s (L%d)\n",
-				strings.Repeat("  ", indent),
-				n.Heading.Text,
-				n.Heading.Level,
-			)
-			for _, p := range n.Paragraphs {
-				fmt.Printf("%s  ¶ %s\n",
-					strings.Repeat("  ", indent),
-					p,
-				)
-			}
-			PrintTree(n.Children, indent+1)
+		if startPage > 0 && n.Heading.Page < startPage {
+			continue
 		}
+		if endPage > 0 && n.Heading.Page > endPage {
+			continue
+		}
+		fmt.Printf("%s- %s (L%d)\n",
+			strings.Repeat("  ", indent),
+			n.Heading.Text,
+			n.Heading.Level,
+		)
+		for _, p := range n.Blocks {
+			fmt.Printf("%s  ¶ %s\n",
+				strings.Repeat("  ", indent),
+				p,
+			)
+		}
+		PrintTree(n.Children, indent+1, startPage, endPage)
 	}
 }

@@ -52,6 +52,7 @@ func DetectHeadings(lines []Line, bodyFont float64, levels []float64) []Heading 
 				FontSize: line.FontSize,
 				FontName: line.FontName,
 				Page:     line.Page,
+				Y:        line.Y,
 			})
 		}
 	}

@@ -1,6 +1,43 @@
 // This file defines the data structures used for representing the layout of a PDF document.
 package layout
 
+type BlockType string
+
+const (
+	BlockParagraph BlockType = "paragraph"
+	BlockCode      BlockType = "code"
+	BlockImage     BlockType = "image"
+)
+
+// The Block struct is a more general representation of a block of content in
+// the document, which can be either a code, image or a paragraph. It includes the
+// type of block, the text content, page number, and Y coordinate. This struct
+// can be useful for intermediate processing steps where we want to treat
+// images, code and paragraphs in a unified way before building the final
+// hierarchical structure.
+type Block struct {
+	Type BlockType // "paragraph" for now
+	Text string
+	Page int
+	Y    float64
+}
+
+// The Heading struct represents a detected heading in the document, including
+// its text content, heading level (e.g., H1, H2), font size, page number, and
+// font name. This information is crucial for understanding the document's
+// structure and hierarchy.
+type Heading struct {
+	ID       string
+	Text     string
+	Level    int
+	Page     int
+	Y        float64
+	Children []*Heading
+	Blocks   []Block
+	FontSize float64
+	FontName string
+}
+
 // The Span struct represents a single text span extracted from the PDF,
 // including its text content, position (X, Y), font size, page number, font
 // name, and any additional flags that may be relevant for layout analysis.
@@ -42,25 +79,36 @@ type FontStats struct {
 	Headings  []float64
 }
 
-// The Heading struct represents a detected heading in the document, including
-// its text content, heading level (e.g., H1, H2), font size, page number, and
-// font name. This information is crucial for understanding the document's
-// structure and hierarchy.
-type Heading struct {
-	Text     string
-	Level    int
-	FontSize float64
-	Page     int
-	FontName string
-	Y        float64
-}
-
 // The Node struct represents a node in the document's hierarchical structure,
 // which is built based on the detected headings. Each node contains a Heading
 // and a list of child nodes, allowing us to represent the document's structure
 // as a tree.
 type Node struct {
-	Heading    Heading
-	Children   []*Node
-	Paragraphs []string
+	Heading  Heading
+	Children []*Node
+	Blocks   []Block
 }
+
+// The Section struct represents a section of the document, which is defined by
+// a heading and its associated content. Each section has a title, content,
+// heading level, and a list of child sections, allowing us to represent the
+// document's structure in a hierarchical manner.
+type Section struct {
+	Title    string
+	Content  string
+	Level    int
+	Children []Section
+	Page     int
+}
+
+// The DocumentType is a simple string type that can be used to categorize
+// documents based on their content or structure. This can be useful for
+// downstream processing, such as applying different parsing or analysis
+// strategies based on the document type.
+type DocumentType string
+
+const (
+	DocumentBook    DocumentType = "book"
+	DocumentSlides  DocumentType = "slides"
+	DocumentUnknown DocumentType = "unknown"
+)
