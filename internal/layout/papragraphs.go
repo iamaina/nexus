@@ -73,10 +73,17 @@ func BuildParagraphs(lines []Line, bodyFont float64) []Line {
 	return paragraphs
 }
 
-func AttachParagraphs(root []*Node, paragraphs []Line) {
+// AttachParagraphs takes a tree of headings and a list of paragraphs and
+// attaches each paragraph to the nearest preceding heading based on page number
+// and Y coordinate. This function first flattens the tree of headings into a
+// list, sorts the headings by their position in the document, and then iterates
+// through the paragraphs to find the appropriate heading to attach each
+// paragraph to. This allows us to build a more complete representation of the
+// document's structure, including both its hierarchy and content.
+func AttachBlocks(tree []*Node, blocks []Block) {
 	var flat []*Node
 
-	// flatten tree (DFS)
+	// flatten
 	var walk func(nodes []*Node)
 	walk = func(nodes []*Node) {
 		for _, n := range nodes {
@@ -84,9 +91,9 @@ func AttachParagraphs(root []*Node, paragraphs []Line) {
 			walk(n.Children)
 		}
 	}
-	walk(root)
+	walk(tree)
 
-	// sort by page + Y (top → bottom)
+	// sort headings (FIXED ORDER)
 	sort.Slice(flat, func(i, j int) bool {
 		if flat[i].Heading.Page == flat[j].Heading.Page {
 			return flat[i].Heading.Y < flat[j].Heading.Y
@@ -94,25 +101,39 @@ func AttachParagraphs(root []*Node, paragraphs []Line) {
 		return flat[i].Heading.Page < flat[j].Heading.Page
 	})
 
-	for _, p := range paragraphs {
+	// attach blocks
+	for _, b := range blocks {
 		var target *Node
 
 		for i := range flat {
 			h := flat[i].Heading
 
-			if h.Page > p.Page {
+			// skip future pages
+			if h.Page > b.Page {
 				break
 			}
 
-			if h.Page == p.Page && h.Y > p.Y {
-				break
+			if h.Page == b.Page {
+				// if we've passed the paragraph → STOP
+				if h.Y > b.Y {
+					break
+				}
+
+				// valid candidate
+				target = flat[i]
+				continue
 			}
 
+			// previous page → fallback
 			target = flat[i]
 		}
 
 		if target != nil {
-			target.Paragraphs = append(target.Paragraphs, p.Text)
+			target.Blocks = append(target.Blocks, b)
+		}
+		text := b.Text
+		if len(text) > 50 {
+			text = text[:50]
 		}
 	}
 }

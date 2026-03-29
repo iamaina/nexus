@@ -64,15 +64,44 @@ var layoutCmd = &cobra.Command{
 		// 6. Build paragraphs
 		paragraphs := layout.BuildParagraphs(lines, body)
 
-		// 7. Build heading tree
+		// 7. Detect document type
+		docType := layout.DetectDocumentType(paragraphs)
+
+		if docType != layout.DocumentBook {
+			fmt.Println("❌ Document type not supported yet:", docType)
+			return
+		}
+
+		// 8. Build heading tree
 		tree := layout.BuildHeadingTree(headings)
 		tree = layout.TrimFrontMatter(tree)
 
-		// 8. Attach paragraphs
-		layout.AttachParagraphs(tree, paragraphs)
+		// 9. Convert paragraphs → blocks
+		var blocks []layout.Block
+		for _, p := range paragraphs {
+			blocks = append(blocks, layout.Block{
+				Type: "paragraph",
+				Text: p.Text,
+				Page: p.Page,
+				Y:    p.Y,
+			})
+		}
 
-		// 9. output tree
-		layout.PrintTree(tree, 0)
+		// 10. Attach blocks (NEW CORE)
+		layout.AttachBlocks(tree, blocks)
+
+		// 11. Build sections
+		sections := layout.BuildSections(tree)
+
+		debugTree := false
+
+		// 11. Print results
+		if debugTree {
+			layout.PrintTree(tree, 0, 0, 20)
+		} else {
+			// sections := layout.BuildSections(tree)
+			layout.PrintSections(sections, 0, 0, 20)
+		}
 
 	},
 }
