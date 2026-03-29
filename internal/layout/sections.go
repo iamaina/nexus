@@ -24,8 +24,12 @@ func buildSectionRecursive(n *Node) Section {
 	var parts []string
 
 	for _, b := range n.Blocks {
-		if b.Type == "paragraph" {
+		switch b.Type {
+		case BlockParagraph:
 			parts = append(parts, b.Text)
+
+		case BlockCode:
+			parts = append(parts, "\n[code]\n"+b.Text+"\n")
 		}
 	}
 

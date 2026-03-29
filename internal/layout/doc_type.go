@@ -17,17 +17,25 @@ func DetectDocumentType(paragraphs []Line) DocumentType {
 	}
 
 	totalWords := 0
+	shortParagraphs := 0
 
 	for _, p := range paragraphs {
-		totalWords += len(strings.Fields(p.Text))
+		words := len(strings.Fields(p.Text))
+		totalWords += words
+
+		if words < 8 {
+			shortParagraphs++
+		}
 	}
 
 	avgWords := totalWords / len(paragraphs)
 
-	// Heuristic:
-	// Slides → very short text blocks
-	// Books → longer flowing text
-	if avgWords < 12 {
+	// 🔥 KEY SIGNALS
+	isMostlyShort := shortParagraphs > len(paragraphs)/2
+	isVeryShortAvg := avgWords < 10
+	isTooFewParagraphs := len(paragraphs) < 30
+
+	if isMostlyShort && isVeryShortAvg && isTooFewParagraphs {
 		return DocumentSlides
 	}
 
