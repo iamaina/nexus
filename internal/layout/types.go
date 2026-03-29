@@ -1,12 +1,29 @@
 // This file defines the data structures used for representing the layout of a PDF document.
 package layout
 
+// The DocumentType is a simple string type that can be used to categorize
+// documents based on their content or structure. This can be useful for
+// downstream processing, such as applying different parsing or analysis
+// strategies based on the document type.
+type DocumentType string
+
+// The BlockType is a simple string type that can be used to categorize
+// different types of content blocks in the document, such as paragraphs,
+// code snippets, and images. This allows us to apply different processing or
+// formatting strategies based on the block type.
 type BlockType string
 
+// These constants represent the different types of blocks that can be
+// identified in a document, such as paragraphs, code snippets, and images. This
+// allows us to categorize content and apply different processing or formatting
+// strategies based on the block type.
 const (
-	BlockParagraph BlockType = "paragraph"
-	BlockCode      BlockType = "code"
-	BlockImage     BlockType = "image"
+	BlockParagraph  BlockType    = "paragraph"
+	BlockCode       BlockType    = "code"
+	BlockImage      BlockType    = "image"
+	DocumentBook    DocumentType = "book"
+	DocumentSlides  DocumentType = "slides"
+	DocumentUnknown DocumentType = "unknown"
 )
 
 // The Block struct is a more general representation of a block of content in
@@ -16,7 +33,7 @@ const (
 // images, code and paragraphs in a unified way before building the final
 // hierarchical structure.
 type Block struct {
-	Type BlockType // "paragraph" for now
+	Type BlockType
 	Text string
 	Page int
 	Y    float64
@@ -100,15 +117,3 @@ type Section struct {
 	Children []Section
 	Page     int
 }
-
-// The DocumentType is a simple string type that can be used to categorize
-// documents based on their content or structure. This can be useful for
-// downstream processing, such as applying different parsing or analysis
-// strategies based on the document type.
-type DocumentType string
-
-const (
-	DocumentBook    DocumentType = "book"
-	DocumentSlides  DocumentType = "slides"
-	DocumentUnknown DocumentType = "unknown"
-)
