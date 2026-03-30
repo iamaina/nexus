@@ -152,7 +152,7 @@ func BuildBlocks(lines []Line, bodyFont float64) []Block {
 func AttachBlocks(tree []*Node, blocks []Block) {
 	var flat []*Node
 
-	// flatten
+	// 1. flatten
 	var walk func(nodes []*Node)
 	walk = func(nodes []*Node) {
 		for _, n := range nodes {
@@ -162,7 +162,7 @@ func AttachBlocks(tree []*Node, blocks []Block) {
 	}
 	walk(tree)
 
-	// sort headings (FIXED ORDER)
+	// 2. sort headings (FIXED ORDER)
 	sort.Slice(flat, func(i, j int) bool {
 		if flat[i].Heading.Page == flat[j].Heading.Page {
 			return flat[i].Heading.Y < flat[j].Heading.Y
@@ -170,7 +170,7 @@ func AttachBlocks(tree []*Node, blocks []Block) {
 		return flat[i].Heading.Page < flat[j].Heading.Page
 	})
 
-	// attach blocks
+	// 3. attach blocks
 	for _, b := range blocks {
 		var target *Node
 
@@ -191,6 +191,40 @@ func AttachBlocks(tree []*Node, blocks []Block) {
 		if target != nil {
 			target.Blocks = append(target.Blocks, b)
 		}
+	}
+
+	// 4. attach captions to images
+	for _, node := range flat {
+		blocks := node.Blocks
+
+		for i := 0; i < len(blocks)-1; i++ {
+			current := &blocks[i]
+			next := &blocks[i+1]
+
+			if current.Type == BlockImage && next.Type == BlockParagraph {
+
+				text := strings.TrimSpace(next.Text)
+
+				if strings.HasPrefix(text, "Figure") {
+					clean := strings.TrimPrefix(text, "Figure")
+					clean = strings.TrimSpace(clean)
+
+					// remove "6." if present
+					if i := strings.Index(clean, "."); i != -1 {
+						clean = strings.TrimSpace(clean[i+1:])
+					}
+
+					current.Caption = clean
+
+					// remove caption paragraph (optional but recommended)
+					blocks = append(blocks[:i+1], blocks[i+2:]...)
+
+					i--
+				}
+			}
+		}
+
+		node.Blocks = blocks
 	}
 }
 

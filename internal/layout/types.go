@@ -33,10 +33,11 @@ const (
 // images, code and paragraphs in a unified way before building the final
 // hierarchical structure.
 type Block struct {
-	Type BlockType
-	Text string
-	Page int
-	Y    float64
+	Type    BlockType
+	Text    string
+	Page    int
+	Y       float64
+	Caption string
 }
 
 // The Heading struct represents a detected heading in the document, including
