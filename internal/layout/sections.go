@@ -90,6 +90,10 @@ func PrintSections(sections []Section, indent, startPage, endPage int) {
 					} else {
 						println(linePrefix + "[image]")
 					}
+				case BlockList:
+					for _, item := range b.Items {
+						println(linePrefix + "- " + item)
+					}
 				}
 			}
 		}
