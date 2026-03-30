@@ -113,7 +113,7 @@ type Node struct {
 // document's structure in a hierarchical manner.
 type Section struct {
 	Title    string
-	Content  string
+	Content  []Block
 	Level    int
 	Children []Section
 	Page     int

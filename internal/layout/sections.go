@@ -35,11 +35,9 @@ func buildSectionRecursive(n *Node) Section {
 		}
 	}
 
-	content := strings.Join(parts, "\n")
-
 	section := Section{
 		Title:   n.Heading.Text,
-		Content: content,
+		Content: n.Blocks,
 		Level:   n.Heading.Level,
 		Page:    n.Heading.Page,
 	}
@@ -66,14 +64,28 @@ func PrintSections(sections []Section, indent, startPage, endPage int) {
 			prefix := strings.Repeat("  ", indent) + "="
 			println(prefix + " " + s.Title)
 
-			content := strings.TrimSpace(s.Content)
-			if content != "" {
-				lines := strings.Split(content, "\n")
-				for _, line := range lines {
-					if line == "" {
-						continue
+			for _, b := range s.Content {
+				linePrefix := strings.Repeat("  ", indent+1)
+
+				switch b.Type {
+
+				case BlockParagraph:
+					text := strings.TrimSpace(b.Text)
+					if text != "" {
+						println(linePrefix + truncate(text, len(text)))
 					}
-					println(strings.Repeat("  ", indent+1) + truncate(line, len(line)))
+
+				case BlockCode:
+					println(linePrefix + "[code]")
+					lines := strings.Split(b.Text, "\n")
+					for _, line := range lines {
+						if strings.TrimSpace(line) != "" {
+							println(linePrefix + "  " + line)
+						}
+					}
+
+				case BlockImage:
+					println(linePrefix + "[image]")
 				}
 			}
 		}
