@@ -30,6 +30,8 @@ func buildSectionRecursive(n *Node) Section {
 
 		case BlockCode:
 			parts = append(parts, "\n[code]\n"+b.Text+"\n")
+		case BlockImage:
+			parts = append(parts, "\n[image]\n")
 		}
 	}
 

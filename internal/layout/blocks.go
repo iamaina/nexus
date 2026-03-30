@@ -24,6 +24,31 @@ func BuildBlocks(lines []Line, bodyFont float64) []Block {
 	for i := range lines {
 		l := &lines[i]
 
+		// 🟨 IMAGE DETECTION (FIRST!)
+		if isImageLine(*l) {
+
+			// flush paragraph
+			if paragraphBuffer != nil {
+				blocks = append(blocks, *paragraphBuffer)
+				paragraphBuffer = nil
+			}
+
+			// flush code
+			if codeBuffer != nil {
+				blocks = append(blocks, *codeBuffer)
+				codeBuffer = nil
+			}
+
+			// add image block
+			blocks = append(blocks, Block{
+				Type: BlockImage,
+				Page: l.Page,
+				Y:    l.Y,
+			})
+
+			continue
+		}
+
 		text := strings.TrimSpace(l.Text)
 		if text == "" ||
 			isTOCLine(text) ||
@@ -203,4 +228,8 @@ func isPageNumber(text string) bool {
 	}
 
 	return false
+}
+
+func isImageLine(line Line) bool {
+	return len(line.Spans) == 1 && line.Spans[0].Type == "image"
 }
