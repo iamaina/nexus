@@ -52,26 +52,31 @@ func buildSectionRecursive(n *Node) Section {
 func PrintSections(sections []Section, indent, startPage, endPage int) {
 
 	for _, s := range sections {
+		inRange := true
 		if startPage > 0 && s.Page < startPage {
-			continue
+			inRange = false
 		}
 		if endPage > 0 && s.Page > endPage {
-			continue
+			inRange = false
 		}
-		prefix := strings.Repeat("  ", indent) + "="
-		println(prefix + " " + s.Title)
 
-		content := strings.TrimSpace(s.Content)
-		if content != "" {
-			lines := strings.Split(content, "\n")
-			for _, line := range lines {
-				if line == "" {
-					continue
+		if inRange {
+			prefix := strings.Repeat("  ", indent) + "="
+			println(prefix + " " + s.Title)
+
+			content := strings.TrimSpace(s.Content)
+			if content != "" {
+				lines := strings.Split(content, "\n")
+				for _, line := range lines {
+					if line == "" {
+						continue
+					}
+					println(strings.Repeat("  ", indent+1) + truncate(line, len(line)))
 				}
-				println(strings.Repeat("  ", indent+1) + truncate(line, 120))
 			}
 		}
 
+		// always recurse into children (they may be in range even if parent isn't)
 		PrintSections(s.Children, indent+1, startPage, endPage)
 	}
 }

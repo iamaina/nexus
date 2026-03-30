@@ -89,7 +89,7 @@ func BuildBlocks(lines []Line, bodyFont float64) []Block {
 		}
 
 		samePage := l.Page == paragraphBuffer.Page
-		closeY := math.Abs(l.Y-paragraphBuffer.Y) < 12
+		closeY := math.Abs(l.Y-paragraphBuffer.Y) < 20
 
 		if samePage && closeY {
 			paragraphBuffer.Text += " " + text
