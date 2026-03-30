@@ -18,7 +18,15 @@ bootstrap:
 	@mise install
 	@echo "✅ Tools installed via mise (Go, golangci-lint, postgres, op)"
 
+setup-python:
+	@echo "=== Setting up Python environment for PDF extraction ==="
+	@python -m venv .venv
+	@.venv/bin/pip install pymupdf
+	@echo "✅ Python environment ready for PDF extraction"
+
 setup:
+	@python -m venv .venv
+	@.venv/bin/pip install pymupdf
 	@echo "=== nexus first-time setup ==="
 
 	# Tool checks
