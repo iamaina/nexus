@@ -228,6 +228,53 @@ func AttachBlocks(tree []*Node, blocks []Block) {
 	}
 }
 
+// MergeLists takes a list of blocks and merges consecutive paragraph blocks
+// that look like list items into a single list block. This function iterates
+// through the blocks, identifies sequences of paragraph blocks that start with
+// common list item markers (e.g., bullets or numbers), and merges them into a
+// single block of type BlockList with an Items field containing the individual
+// list items. This helps to further refine the document's structure by
+// recognizing and grouping related content together.
+func MergeLists(blocks []Block) []Block {
+	var result []Block
+
+	for i := 0; i < len(blocks); i++ {
+
+		// only paragraphs can become list items
+		if blocks[i].Type == BlockParagraph && isListItem(blocks[i].Text) {
+
+			var items []string
+			startPage := blocks[i].Page
+			startY := blocks[i].Y
+
+			// collect consecutive list items
+			for i < len(blocks) &&
+				blocks[i].Type == BlockParagraph &&
+				isListItem(blocks[i].Text) {
+
+				items = append(items, cleanListItem(blocks[i].Text))
+				i++
+			}
+
+			// create list block
+			result = append(result, Block{
+				Type:  BlockList,
+				Items: items,
+				Page:  startPage,
+				Y:     startY,
+			})
+
+			i-- // adjust index after loop
+			continue
+		}
+
+		// normal block
+		result = append(result, blocks[i])
+	}
+
+	return result
+}
+
 func isTOCLine(text string) bool {
 	text = strings.TrimSpace(text)
 
@@ -266,4 +313,33 @@ func isPageNumber(text string) bool {
 
 func isImageLine(line Line) bool {
 	return len(line.Spans) == 1 && line.Spans[0].Type == "image"
+}
+
+func isListItem(text string) bool {
+	text = strings.TrimSpace(text)
+
+	// bullet list
+	if strings.HasPrefix(text, "•") {
+		return true
+	}
+
+	// numbered list (1. 2. 3.)
+	if regexp.MustCompile(`^\d+\.`).MatchString(text) {
+		return true
+	}
+
+	return false
+}
+
+func cleanListItem(text string) string {
+	text = strings.TrimSpace(text)
+
+	// remove bullet
+	if strings.HasPrefix(text, "•") {
+		return strings.TrimSpace(strings.TrimPrefix(text, "•"))
+	}
+
+	// remove "1. ", "2. "
+	re := regexp.MustCompile(`^\d+\.\s*`)
+	return re.ReplaceAllString(text, "")
 }

@@ -50,8 +50,11 @@ var layoutCmd = &cobra.Command{
 		// 5. Detect headings
 		headings := layout.DetectHeadings(lines, body, fontLevels)
 
-		// 6. Build blocks (NEW CORE)
+		// 6. Build blocks
 		blocks := layout.BuildBlocks(lines, body)
+
+		// 7. Merge lists
+		blocks = layout.MergeLists(blocks)
 
 		var paragraphLines []layout.Line
 
@@ -63,24 +66,24 @@ var layoutCmd = &cobra.Command{
 			}
 		}
 
-		// 7. Detect document type
+		// 8. Detect document type
 		docType := layout.DetectDocumentType(paragraphLines)
 		if docType != layout.DocumentBook {
 			fmt.Println("❌ Document type not supported yet:", docType)
 			return
 		}
 
-		// 8. Build heading tree
+		// 9. Build heading tree
 		tree := layout.BuildHeadingTree(headings)
 		tree = layout.TrimFrontMatter(tree)
 
-		// 9. Attach blocks (CORE STEP)
+		// 10. Attach blocks (CORE STEP)
 		layout.AttachBlocks(tree, blocks)
 
-		// 10. Build sections
+		// 11. Build sections
 		sections := layout.BuildSections(tree)
 
-		// 11. Output
+		// 12. Output
 		layout.PrintSections(sections, 0, 19, 20)
 	},
 }

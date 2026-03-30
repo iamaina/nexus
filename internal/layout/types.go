@@ -21,6 +21,7 @@ const (
 	BlockParagraph  BlockType    = "paragraph"
 	BlockCode       BlockType    = "code"
 	BlockImage      BlockType    = "image"
+	BlockList       BlockType    = "list"
 	DocumentBook    DocumentType = "book"
 	DocumentSlides  DocumentType = "slides"
 	DocumentUnknown DocumentType = "unknown"
@@ -35,6 +36,7 @@ const (
 type Block struct {
 	Type    BlockType
 	Text    string
+	Items   []string
 	Page    int
 	Y       float64
 	Caption string
