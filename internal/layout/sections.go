@@ -85,7 +85,11 @@ func PrintSections(sections []Section, indent, startPage, endPage int) {
 					}
 
 				case BlockImage:
-					println(linePrefix + "[image]")
+					if b.Caption != "" {
+						println(linePrefix + "[image: " + b.Caption + "]")
+					} else {
+						println(linePrefix + "[image]")
+					}
 				}
 			}
 		}
