@@ -25,7 +25,9 @@ func BuildBlocks(lines []Line, bodyFont float64) []Block {
 		l := &lines[i]
 
 		text := strings.TrimSpace(l.Text)
-		if text == "" || isTOCLine(text) {
+		if text == "" ||
+			isTOCLine(text) ||
+			isPageNumber(text) {
 			continue
 		}
 
@@ -86,10 +88,14 @@ func BuildBlocks(lines []Line, bodyFont float64) []Block {
 			continue
 		}
 
-		if l.Page == paragraphBuffer.Page && math.Abs(l.Y-paragraphBuffer.Y) < 12 {
+		samePage := l.Page == paragraphBuffer.Page
+		closeY := math.Abs(l.Y-paragraphBuffer.Y) < 12
+
+		if samePage && closeY {
 			paragraphBuffer.Text += " " + text
 			paragraphBuffer.Y = l.Y
 		} else {
+			// flush current paragraph and start new one
 			blocks = append(blocks, *paragraphBuffer)
 			paragraphBuffer = &Block{
 				Type: BlockParagraph,
@@ -186,4 +192,15 @@ func isCodeLine(l Line) bool {
 		strings.Contains(font, "courier") ||
 		strings.Contains(font, "code") ||
 		strings.Contains(font, "mn")
+}
+
+func isPageNumber(text string) bool {
+	text = strings.TrimSpace(text)
+
+	// pure number
+	if regexp.MustCompile(`^\d+$`).MatchString(text) {
+		return true
+	}
+
+	return false
 }
