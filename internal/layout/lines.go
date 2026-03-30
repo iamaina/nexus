@@ -28,6 +28,15 @@ func GroupSpansIntoLines(spans []Span, yTolerance float64) []Line {
 
 	for _, span := range spans {
 		placed := false
+		// 🟨 IMAGE → becomes its own line
+		if span.Type == "image" {
+			lines = append(lines, Line{
+				Spans: []Span{span},
+				Y:     span.Y,
+				Page:  span.Page,
+			})
+			continue
+		}
 
 		for i := range lines {
 			line := &lines[i]

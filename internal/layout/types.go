@@ -59,6 +59,7 @@ type Heading struct {
 // including its text content, position (X, Y), font size, page number, font
 // name, and any additional flags that may be relevant for layout analysis.
 type Span struct {
+	Type     string  `json:"type"`
 	Text     string  `json:"text"`
 	X        float64 `json:"x"`
 	Y        float64 `json:"y"`
