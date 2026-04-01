@@ -121,3 +121,12 @@ type Section struct {
 	Children []Section
 	Page     int
 }
+
+// The Chunk struct represents a chunk of content that is created by splitting
+// sections into smaller pieces. Each chunk has a title and a list of blocks of
+// content. This struct is useful for downstream processing, such as storing
+// chunks in a vector database or using them for question-answering tasks.
+type Chunk struct {
+	Title   string
+	Blocks  []Block
+}

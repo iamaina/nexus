@@ -67,33 +67,9 @@ func PrintSections(sections []Section, indent, startPage, endPage int) {
 			for _, b := range s.Content {
 				linePrefix := strings.Repeat("  ", indent+1)
 
-				switch b.Type {
-
-				case BlockParagraph:
-					text := strings.TrimSpace(b.Text)
-					if text != "" {
-						println(linePrefix + truncate(text, len(text)))
-					}
-
-				case BlockCode:
-					println(linePrefix + "[code]")
-					lines := strings.Split(b.Text, "\n")
-					for _, line := range lines {
-						if strings.TrimSpace(line) != "" {
-							println(linePrefix + "  " + line)
-						}
-					}
-
-				case BlockImage:
-					if b.Caption != "" {
-						println(linePrefix + "[image: " + b.Caption + "]")
-					} else {
-						println(linePrefix + "[image]")
-					}
-				case BlockList:
-					for _, item := range b.Items {
-						println(linePrefix + "- " + item)
-					}
+				lines := RenderBlock(b, linePrefix)
+				for _, l := range lines {
+					println(l)
 				}
 			}
 		}
@@ -101,11 +77,4 @@ func PrintSections(sections []Section, indent, startPage, endPage int) {
 		// always recurse into children (they may be in range even if parent isn't)
 		PrintSections(s.Children, indent+1, startPage, endPage)
 	}
-}
-
-func truncate(text string, max int) string {
-	if len(text) <= max {
-		return text
-	}
-	return text[:max] + "..."
 }
