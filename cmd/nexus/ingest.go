@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/iamaina/nexus/internal/app"
-	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/spf13/cobra"
 )
@@ -59,17 +58,17 @@ var ingestCmd = &cobra.Command{
 					return nil
 				}
 
-				ingested, err := ingestion.IngestFile(ctx, services, src.Name, path, force)
-				if err != nil {
-					logger.Error(ctx, "File ingestion failed", slog.String("path", path), slog.Any("err", err))
-					failed++
-					return nil // continue
-				}
-				if ingested {
-					processed++
-				} else {
-					skipped++
-				}
+				// ingested, err := ingestion.IngestFile(ctx, services, src.Name, path, force)
+				// if err != nil {
+				// 	logger.Error(ctx, "File ingestion failed", slog.String("path", path), slog.Any("err", err))
+				// 	failed++
+				// 	return nil // continue
+				// }
+				// if ingested {
+				// 	processed++
+				// } else {
+				// 	skipped++
+				// }
 				return nil
 			})
 

@@ -84,7 +84,8 @@ var layoutCmd = &cobra.Command{
 		sections := layout.BuildSections(tree)
 
 		// 12. Output
-		layout.PrintSections(sections, 0, 19, 20)
+		chunks := layout.ChunkSections(sections, 5)
+		layout.PrintChunks(chunks)
 	},
 }
 
