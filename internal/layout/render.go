@@ -2,6 +2,7 @@ package layout
 
 import "strings"
 
+// RenderBlock converts a block to indented text lines suitable for display or storage.
 func RenderBlock(b Block, prefix string) []string {
 	var lines []string
 

@@ -1,4 +1,5 @@
-// This file defines the data structures used for representing the layout of a PDF document.
+// Package layout provides the PDF layout analysis pipeline: span extraction,
+// line grouping, font analysis, heading detection, block building, and section chunking.
 package layout
 
 // The DocumentType is a simple string type that can be used to categorize
@@ -127,6 +128,8 @@ type Section struct {
 // content. This struct is useful for downstream processing, such as storing
 // chunks in a vector database or using them for question-answering tasks.
 type Chunk struct {
-	Title   string
-	Blocks  []Block
+	Title  string
+	Level  int
+	Page   int
+	Blocks []Block
 }

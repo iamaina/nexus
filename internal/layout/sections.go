@@ -2,7 +2,10 @@
 // from the detected headings and their associated paragraphs.
 package layout
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // BuildSections takes a list of Nodes (which represent the hierarchical
 // structure of headings and their associated paragraphs) and builds a list of
@@ -21,20 +24,6 @@ func BuildSections(nodes []*Node) []Section {
 }
 
 func buildSectionRecursive(n *Node) Section {
-	var parts []string
-
-	for _, b := range n.Blocks {
-		switch b.Type {
-		case BlockParagraph:
-			parts = append(parts, b.Text)
-
-		case BlockCode:
-			parts = append(parts, "\n[code]\n"+b.Text+"\n")
-		case BlockImage:
-			parts = append(parts, "\n[image]\n")
-		}
-	}
-
 	section := Section{
 		Title:   n.Heading.Text,
 		Content: n.Blocks,
@@ -49,6 +38,7 @@ func buildSectionRecursive(n *Node) Section {
 	return section
 }
 
+// PrintSections prints a debug representation of sections to stdout.
 func PrintSections(sections []Section, indent, startPage, endPage int) {
 
 	for _, s := range sections {
@@ -62,14 +52,12 @@ func PrintSections(sections []Section, indent, startPage, endPage int) {
 
 		if inRange {
 			prefix := strings.Repeat("  ", indent) + "="
-			println(prefix + " " + s.Title)
+			fmt.Println(prefix + " " + s.Title)
 
 			for _, b := range s.Content {
 				linePrefix := strings.Repeat("  ", indent+1)
-
-				lines := RenderBlock(b, linePrefix)
-				for _, l := range lines {
-					println(l)
+				for _, l := range RenderBlock(b, linePrefix) {
+					fmt.Println(l)
 				}
 			}
 		}

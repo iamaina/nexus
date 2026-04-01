@@ -1,4 +1,3 @@
-// ExtractPDF extracts text and layout information from a PDF file.
 package layout
 
 import (
@@ -7,11 +6,11 @@ import (
 	"os/exec"
 )
 
+// ExtractPDF runs the Python extractor on path and returns raw span JSON.
 func ExtractPDF(path string) ([]byte, error) {
 	if _, err := os.Stat(".venv/bin/python"); os.IsNotExist(err) {
-		fmt.Println("❌ Python environment not set up. Run: make setup-python")
-		return nil, fmt.Errorf("Python environment not set up")
+		return nil, fmt.Errorf("python environment not set up — run: make setup-python")
 	}
-	cmd := exec.Command(".venv/bin/python", "scripts/extract_pdf.py", path)
+	cmd := exec.Command(".venv/bin/python", "scripts/extract_pdf.py", path) //nolint:gosec
 	return cmd.Output()
 }
