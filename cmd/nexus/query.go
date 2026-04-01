@@ -4,13 +4,11 @@ package nexus
 import (
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
-	"strings"
+	"time"
 
 	"github.com/iamaina/nexus/internal/app"
 	"github.com/iamaina/nexus/internal/logger"
-	"github.com/ollama/ollama/api"
+	"github.com/iamaina/nexus/internal/models"
 	"github.com/spf13/cobra"
 )
 
@@ -22,105 +20,102 @@ var queryCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		services, ok := ctx.Value(app.ServicesKey).(*app.Services)
+
+		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
-			logger.Error(ctx, "Services not found")
+			logger.Error(ctx, "Application not found in context")
 			return
 		}
 
+		queryStart := time.Now()
 		question := args[0]
-		logger.Info(ctx, "Query received", slog.String("question", question))
 
 		threshold := queryThreshold
 		if threshold == 0 {
-			threshold = float64(services.Config.RelevanceThreshold) // your existing field
+			threshold = float64(a.Config.RelevanceThreshold)
 		}
 		if threshold == 0 {
 			threshold = 0.65
 		}
-		logger.Info(ctx, "Using relevance threshold", slog.Float64("threshold", threshold))
-
-		// Embed question
-		baseURL, _ := url.Parse("http://localhost:11434")
-		client := api.NewClient(baseURL, &http.Client{})
-
-		resp, err := client.Embed(ctx, &api.EmbedRequest{
-			Model: "nomic-embed-text",
-			Input: []string{question},
-		})
-		if err != nil {
-			logger.Error(ctx, "Embedding failed", slog.Any("err", err))
-			return
-		}
-
-		queryVec := resp.Embeddings[0]
-		logger.Info(ctx, "Question embedded", slog.Int("dim", len(queryVec)))
-
-		// Convert to Postgres vector string
-		vectorStr := vectorToString(queryVec)
-
-		// Retrieve chunks
-
-		var results []app.Result
-		rows, err := services.DB.Query(ctx, `
-			SELECT 
-				d.file_path,
-				c.chunk_text,
-				1 - (c.embedding <=> $1::vector) as similarity
-			FROM chunks c
-			JOIN documents d ON c.document_id = d.id
-			ORDER BY c.embedding <=> $1::vector
-			LIMIT 8`,
-			vectorStr,
+		logger.Info(ctx, "query.start",
+			slog.String("component", "query"),
+			slog.String("event", "query.start"),
+			slog.Float64("threshold", threshold),
 		)
+
+		// Embed the question
+		t := time.Now()
+		embeddings, err := a.Embedder.Embed(ctx, []string{question})
 		if err != nil {
-			logger.Error(ctx, "Search failed", slog.Any("err", err))
+			logger.Error(ctx, "query.embed_failed",
+				slog.String("component", "query"),
+				slog.String("event", "query.embed_failed"),
+				slog.Any("err", err))
 			return
 		}
-		defer rows.Close()
+		queryVec := embeddings[0]
+		logger.Debug(ctx, "query.embedded",
+			slog.String("component", "query"),
+			slog.String("event", "query.embedded"),
+			slog.Int("dim", len(queryVec)),
+			slog.Int64("duration_ms", time.Since(t).Milliseconds()),
+		)
 
-		fmt.Printf("\n🔍 Query: %s\n\n", question)
+		// Vector search
+		t = time.Now()
+		candidates, err := a.Chunks.Search(ctx, queryVec, 8)
+		if err != nil {
+			logger.Error(ctx, "query.search_failed",
+				slog.String("component", "query"),
+				slog.String("event", "query.search_failed"),
+				slog.Any("err", err))
+			return
+		}
 
-		for rows.Next() {
-			var r app.Result
-			if err := rows.Scan(&r.File, &r.Text, &r.Score); err != nil {
-				logger.Error(ctx, "Failed to scan row", slog.Any("err", err))
-				continue
-			}
+		// Filter by threshold
+		var results []models.Result
+		for _, r := range candidates {
 			if r.Score >= threshold {
 				results = append(results, r)
 			}
 		}
+		logger.Debug(ctx, "query.search_done",
+			slog.String("component", "query"),
+			slog.String("event", "query.search_done"),
+			slog.Int("candidates", len(candidates)),
+			slog.Int("results_above_threshold", len(results)),
+			slog.Int64("duration_ms", time.Since(t).Milliseconds()),
+		)
+
+		fmt.Printf("\n🔍 Query: %s\n\n", question)
 
 		if len(results) == 0 {
 			fmt.Println("⚠️  No sufficiently relevant information found.")
 			return
 		}
 
-		// Generate nice answer
-		answer, err := services.Summarize(ctx, question, results)
+		// Generate answer
+		t = time.Now()
+		answer, err := a.Summarizer.Summarize(ctx, question, results)
 		if err != nil {
-			logger.Error(ctx, "Summarization failed", slog.Any("err", err))
+			logger.Error(ctx, "query.summarize_failed",
+				slog.String("component", "query"),
+				slog.String("event", "query.summarize_failed"),
+				slog.Any("err", err))
 			return
 		}
+		logger.Info(ctx, "query.complete",
+			slog.String("component", "query"),
+			slog.String("event", "query.complete"),
+			slog.Int64("summarize_ms", time.Since(t).Milliseconds()),
+			slog.Int64("total_ms", time.Since(queryStart).Milliseconds()),
+		)
 
-		fmt.Printf("\n🔍 Answer to: %s\n\n%s\n", question, answer)
+		fmt.Printf("Answer:\n\n%s\n", answer)
 	},
 }
 
-func vectorToString(vec []float32) string {
-	var sb strings.Builder
-	sb.WriteString("[")
-	for i, v := range vec {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf("%f", v))
-	}
-	sb.WriteString("]")
-	return sb.String()
-}
-
 func init() {
+	queryCmd.Flags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold (overrides config)")
 	RootCmd.AddCommand(queryCmd)
 }

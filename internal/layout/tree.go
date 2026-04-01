@@ -1,5 +1,3 @@
-// This file contains the logic for building a hierarchical tree of headings
-// based on their levels.
 package layout
 
 import (
@@ -70,6 +68,7 @@ func BuildHeadingTree(headings []Heading) []*Node {
 	return roots
 }
 
+// PrintTree prints a debug representation of the heading tree to stdout.
 func PrintTree(nodes []*Node, indent, startPage, endPage int) {
 	for _, n := range nodes {
 		if startPage > 0 && n.Heading.Page < startPage {
@@ -86,7 +85,7 @@ func PrintTree(nodes []*Node, indent, startPage, endPage int) {
 		for _, p := range n.Blocks {
 			fmt.Printf("%s  ¶ %s\n",
 				strings.Repeat("  ", indent),
-				p,
+				p.Text,
 			)
 		}
 		PrintTree(n.Children, indent+1, startPage, endPage)

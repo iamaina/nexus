@@ -1,7 +1,3 @@
-// This file contains the logic for detecting headings in a PDF document based
-// on font size, font name, and other heuristics. The DetectHeadings function
-// takes a list of lines, the body font size, and predefined heading levels to
-// identify potential headings in the document.
 package layout
 
 import (
@@ -10,7 +6,8 @@ import (
 	"unicode"
 )
 
-func DetectHeadings(lines []Line, bodyFont float64, levels []float64) []Heading {
+// DetectHeadings identifies heading lines based on font size relative to bodyFont and bold styling.
+func DetectHeadings(lines []Line, bodyFont float64, _ []float64) []Heading {
 	var headings []Heading
 
 	for _, line := range lines {
@@ -133,6 +130,46 @@ func hasCodeSpan(line Line) bool {
 		}
 	}
 	return false
+}
+
+// MergeWrappedHeadings merges consecutive headings that are line-wrapped
+// continuations of the same heading. A heading is considered a continuation
+// when it shares the same level and page as the previous heading, is within
+// a small Y distance (line-wrap), and the previous heading's text does not
+// end with sentence-terminating punctuation.
+func MergeWrappedHeadings(headings []Heading) []Heading {
+	if len(headings) == 0 {
+		return headings
+	}
+
+	merged := make([]Heading, 0, len(headings))
+	merged = append(merged, headings[0])
+
+	for i := 1; i < len(headings); i++ {
+		prev := &merged[len(merged)-1]
+		cur := headings[i]
+
+		if cur.Level == prev.Level &&
+			cur.Page == prev.Page &&
+			cur.Y-prev.Y < 40 && // within ~40pt vertically (generous for large fonts)
+			!endsWithTerminator(prev.Text) {
+			prev.Text = prev.Text + " " + cur.Text
+			continue
+		}
+
+		merged = append(merged, cur)
+	}
+
+	return merged
+}
+
+func endsWithTerminator(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	last := s[len(s)-1]
+	return last == '.' || last == '!' || last == '?' || last == ':' || last == ';'
 }
 
 func classifyHeading(fs float64, body float64) int {

@@ -1,17 +1,11 @@
-// This file contains the logic for analyzing font usage in a PDF document to
-// identify the body font. The AnalyzeFonts function takes a list of lines and
-// counts the frequency of each font size (excluding code fonts) to determine
-// which font size is most likely used for the main text content. This
-// information is crucial for accurately detecting headings and understanding
-// the document's structure.
 package layout
 
 import (
-	"math"
 	"sort"
 	"strings"
 )
 
+// AnalyzeFonts returns the body font size and a frequency map of all font sizes found in lines.
 func AnalyzeFonts(lines []Line) (float64, map[float64]int) {
 	freq := make(map[float64]int)
 
@@ -32,11 +26,11 @@ func AnalyzeFonts(lines []Line) (float64, map[float64]int) {
 
 	// find most frequent font (body)
 	var body float64
-	max := 0
+	maxCount := 0
 
 	for fs, count := range freq {
-		if count > max {
-			max = count
+		if count > maxCount {
+			maxCount = count
 			body = fs
 		}
 	}
@@ -46,6 +40,8 @@ func AnalyzeFonts(lines []Line) (float64, map[float64]int) {
 	return body, freq
 }
 
+// BuildFontLevels returns font sizes larger than bodyFont that appear frequently
+// enough to be heading candidates, sorted largest first.
 func BuildFontLevels(fonts map[float64]int, bodyFont float64) []float64 {
 	var sizes []float64
 
@@ -57,14 +53,29 @@ func BuildFontLevels(fonts map[float64]int, bodyFont float64) []float64 {
 		}
 	}
 
-	// Step 2: filter meaningful fonts
+	// Step 2: filter meaningful fonts — must be larger than body, with a
+	// frequency floor that scales down for fonts much larger than body
+	// (chapter titles are rare but still valid headings).
 	for fs, count := range fonts {
-		// skip body
-		if math.Abs(fs-bodyFont) < 0.1 {
+		// must be strictly larger than body
+		if fs <= bodyFont+0.1 {
 			continue
 		}
 
-		if count < maxCount/50 {
+		// frequency floor: relax for fonts significantly larger than body
+		// so rare-but-large chapter title fonts aren't dropped
+		ratio := fs / bodyFont
+		var minCount int
+		switch {
+		case ratio >= 1.8:
+			minCount = 3 // very large fonts — allow even rare ones
+		case ratio >= 1.3:
+			minCount = maxCount / 100
+		default:
+			minCount = maxCount / 50
+		}
+
+		if count < minCount {
 			continue
 		}
 

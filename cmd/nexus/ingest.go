@@ -6,40 +6,52 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/spf13/cobra"
 )
 
 var force bool
+
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
 	Short: "Ingest documents from configured sources",
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 
-		services, ok := ctx.Value(app.ServicesKey).(*app.Services)
+		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
-			logger.Error(ctx, "Services not found in context")
+			logger.Error(ctx, "Application not found in context")
 			os.Exit(1)
 		}
 
-		logger.Info(ctx, "Starting ingestion", slog.Int("sources", len(services.Config.Sources)))
+		batchStart := time.Now()
+		logger.Info(ctx, "ingestion.start",
+			slog.String("component", "ingestion"),
+			slog.String("event", "ingestion.start"),
+			slog.Int("source_count", len(a.Config.Sources)),
+		)
 
 		var processed, skipped, failed int
 
-		for _, src := range services.Config.Sources {
-			logger.Info(ctx, "Processing source",
-				slog.String("name", src.Name),
+		for _, src := range a.Config.Sources {
+			logger.Debug(ctx, "source.start",
+				slog.String("component", "ingestion"),
+				slog.String("event", "source.start"),
+				slog.String("source", src.Name),
 				slog.String("path", src.Path),
 			)
 
 			err := filepath.WalkDir(src.Path, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
-					logger.Error(ctx, "Error accessing path",
+					logger.Error(ctx, "source.walk_error",
+						slog.String("component", "ingestion"),
+						slog.String("event", "source.walk_error"),
 						slog.String("path", path),
-						slog.Any("error", err))
+						slog.Any("err", err))
 					return err
 				}
 				if d.IsDir() {
@@ -47,42 +59,49 @@ var ingestCmd = &cobra.Command{
 				}
 
 				ext := strings.ToLower(filepath.Ext(path))
-				match := false
 				for _, e := range src.Extensions {
-					if ext == strings.ToLower(e) {
-						match = true
-						break
+					if ext != strings.ToLower(e) {
+						continue
 					}
+					ingested, err := ingestion.IngestFile(ctx, a, path, src.Name, force)
+					if err != nil {
+						logger.Error(ctx, "file.failed",
+							slog.String("component", "ingestion"),
+							slog.String("event", "file.failed"),
+							slog.String("source", src.Name),
+							slog.String("file_path", path),
+							slog.Any("err", err))
+						failed++
+						return nil
+					}
+					if ingested {
+						processed++
+					} else {
+						skipped++
+					}
+					break
 				}
-				if !match {
-					return nil
-				}
-
-				// ingested, err := ingestion.IngestFile(ctx, services, src.Name, path, force)
-				// if err != nil {
-				// 	logger.Error(ctx, "File ingestion failed", slog.String("path", path), slog.Any("err", err))
-				// 	failed++
-				// 	return nil // continue
-				// }
-				// if ingested {
-				// 	processed++
-				// } else {
-				// 	skipped++
-				// }
 				return nil
 			})
 
 			if err != nil {
-				logger.Error(ctx, "Source walk failed",
+				logger.Error(ctx, "source.failed",
+					slog.String("component", "ingestion"),
+					slog.String("event", "source.failed"),
 					slog.String("source", src.Name),
 					slog.String("path", src.Path),
 					slog.Any("err", err))
 			}
 		}
-		logger.Info(ctx, "Ingestion complete",
+
+		logger.Info(ctx, "ingestion.complete",
+			slog.String("component", "ingestion"),
+			slog.String("event", "ingestion.complete"),
 			slog.Int("processed", processed),
 			slog.Int("skipped", skipped),
-			slog.Int("failed", failed))
+			slog.Int("failed", failed),
+			slog.Int64("duration_ms", time.Since(batchStart).Milliseconds()),
+		)
 	},
 }
 

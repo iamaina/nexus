@@ -1,5 +1,3 @@
-// This file contains the logic for building paragraphs from lines of text
-// extracted from a PDF document.
 package layout
 
 import (
