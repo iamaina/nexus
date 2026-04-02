@@ -19,8 +19,14 @@ type EnrichedChunk struct {
 }
 
 // Result is a retrieved chunk returned by a vector similarity search.
+// DocumentID, ChunkIndex, and Level are navigation fields used for child
+// chunk expansion and are not displayed to the end user.
 type Result struct {
-	File  string
-	Text  string
-	Score float64
+	DocumentID int64
+	ChunkIndex int
+	Level      int
+	File       string
+	Chapter    string
+	Text       string
+	Score      float64
 }
