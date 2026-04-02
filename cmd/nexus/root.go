@@ -37,6 +37,6 @@ func init() {
 	if len(os.Args) > 1 {
 		_ = RootCmd.PersistentFlags().Parse(os.Args[1:])
 	}
-	config.C.RelevanceThreshold = float32(queryThreshold)
+	config.C.RelevanceThreshold = queryThreshold
 	config.C.LogLevel = &logLevel
 }
