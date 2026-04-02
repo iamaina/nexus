@@ -1,7 +1,11 @@
 config.yaml
 config.yml
+<<<<<<< HEAD
 test/
 .venv/
 .ollama_gen_model
 .pgpassword
 nexus
+=======
+test/
+>>>>>>> master
