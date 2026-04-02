@@ -25,8 +25,13 @@ type Config struct {
 	Postgres struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"postgres"`
+	Ollama struct {
+		BaseURL         string `yaml:"baseURL"`
+		EmbeddingModel  string `yaml:"embeddingModel"`
+		GenerationModel string `yaml:"generationModel"`
+	} `yaml:"ollama"`
 	LogLevel           *string `yaml:"log_level"`
-	RelevanceThreshold float32 `yaml:"relevanceThreshold"`
+	RelevanceThreshold float64 `yaml:"relevanceThreshold"`
 }
 
 // C is the global configuration instance loaded at application startup.

@@ -1,64 +1,57 @@
-// Package app provides the core application services and dependency management.
+// Package app wires all application dependencies together.
 package app
 
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
-	"path/filepath"
-	"strings"
-
 	"log/slog"
+	"net/http"
+	"strings"
+	"time"
 
 	"github.com/iamaina/nexus/internal/config"
+	"github.com/iamaina/nexus/internal/embedder"
 	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/models"
+	"github.com/iamaina/nexus/internal/summarizer"
 	"github.com/jackc/pgx/v5"
-	"github.com/ollama/ollama/api"
 )
-
-// Result represents a retrieved chunk of information relevant to a query.
-type Result struct {
-	File  string
-	Text  string
-	Score float64
-}
-
-// Services holds all the core services and resources of the application, such as configuration and database connections.
-type Services struct {
-	Config *config.Config
-	DB     *pgx.Conn
-	// Add more services later: Embedder, Retriever, etc.
-}
-
-// EnrichedChunk represents a piece of text along with its associated chapter.
-type EnrichedChunk struct {
-	Text    string
-	Chapter string
-}
 
 type contextKey string
 
-// ServicesKey is the context key used to store the Services instance in command contexts.
-const ServicesKey contextKey = "services"
+// AppKey is the context key used to pass the Application instance to commands.
+const AppKey contextKey = "app"
 
-// New initializes all services, including loading configuration, setting up logging, and connecting to the database.
-func New() (*Services, error) {
-	// 1. Logger first (bootstrapping)
-	logger.Init(*config.C.LogLevel)
+// Application holds all wired dependencies.
+type Application struct {
+	Config     *config.Config
+	DB         *pgx.Conn
+	Documents  *models.DocumentModel
+	Chunks     *models.ChunkModel
+	Embedder   *embedder.OllamaEmbedder
+	Summarizer *summarizer.OllamaSummarizer
+}
 
-	// 2. Config
-	if err := config.Load(""); err != nil { // empty = default path
-		logger.Error(context.Background(), "Config load failed", slog.Any("err", err))
+// New loads config, connects to the database, runs migrations, and wires all dependencies.
+func New() (*Application, error) {
+	// 1. Config
+	if err := config.Load(""); err != nil {
 		return nil, err
 	}
 	if err := config.C.ResolveSecrets(); err != nil {
-		logger.Error(context.Background(), "Config secrets failed", slog.Any("err", err))
 		return nil, err
 	}
 
-	// 3. Storage (DB)
+	// 2. Logger
+	logLevel := "info"
+	if config.C.LogLevel != nil && *config.C.LogLevel != "" {
+		logLevel = *config.C.LogLevel
+	}
+	logger.Init(logLevel)
+
 	ctx := context.Background()
+
+	// 3. Database
 	db, err := pgx.Connect(ctx, config.C.Postgres.DSN)
 	if err != nil {
 		logger.Error(ctx, "DB connect failed", slog.Any("err", err))
@@ -68,244 +61,106 @@ func New() (*Services, error) {
 		logger.Error(ctx, "DB ping failed", slog.Any("err", err))
 		return nil, err
 	}
+	logger.Info(ctx, "PostgreSQL connected", slog.String("dsn", maskDSN(config.C.Postgres.DSN)))
 
-	logger.Info(ctx, "PostgreSQL connected successfully",
-		slog.String("dsn", maskDSN(config.C.Postgres.DSN)))
-
-	// 4. Ensure tables
-	_, err = db.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS documents (
-			id BIGSERIAL PRIMARY KEY,
-			source_name TEXT NOT NULL,
-			file_path TEXT UNIQUE NOT NULL,
-			file_hash TEXT NOT NULL,
-			char_count INTEGER NOT NULL,
-			chunk_count INTEGER NOT NULL,
-			ingest_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-	`)
-	if err != nil {
-		logger.Error(ctx, "Table creation failed", slog.Any("err", err))
+	// 4. Migrations
+	if err := migrate(ctx, db); err != nil {
 		return nil, err
 	}
 
-	// 5. chunks table
-	_, err = db.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS chunks (
-			id BIGSERIAL PRIMARY KEY,
-			document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
-			chunk_index INTEGER NOT NULL,
-			chunk_text TEXT NOT NULL,
-			chapter TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE (document_id, chunk_index)
-		);
-	`)
-	if err != nil {
-		logger.Error(ctx, "chunks table creation failed", slog.Any("err", err))
+	// 5. Ollama clients
+	ollamaURL := config.C.Ollama.BaseURL
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	embModel := config.C.Ollama.EmbeddingModel
+	if embModel == "" {
+		embModel = "nomic-embed-text"
+	}
+	genModel := config.C.Ollama.GenerationModel
+	if genModel == "" {
+		genModel = "llama3.2"
+	}
+
+	if err := checkOllama(ctx, ollamaURL); err != nil {
 		return nil, err
 	}
 
-	// 6. embedding column (if not exists)
-	// Ensure embedding column exists
-	_, err = db.Exec(ctx, `
-		ALTER TABLE chunks 
-		ADD COLUMN IF NOT EXISTS embedding vector(768);
-	`)
-
+	emb, err := embedder.New(ollamaURL, embModel)
 	if err != nil {
-		logger.Error(ctx, "Failed to add embedding column", slog.Any("err", err))
 		return nil, err
 	}
 
-	return &Services{
-		Config: &config.C,
-		DB:     db,
+	sum, err := summarizer.New(ollamaURL, genModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Application{
+		Config:     &config.C,
+		DB:         db,
+		Documents:  &models.DocumentModel{DB: db},
+		Chunks:     &models.ChunkModel{DB: db},
+		Embedder:   emb,
+		Summarizer: sum,
 	}, nil
 }
 
-// InsertDocument inserts or updates a document's metadata in the database and returns its ID.
-func (s *Services) InsertDocument(ctx context.Context, source, path, hash string, charCount, chunkCount int) (int64, error) {
-	var id int64
-	err := s.DB.QueryRow(ctx,
-		`INSERT INTO documents (source_name, file_path, file_hash, char_count, chunk_count)
-		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (file_path) DO UPDATE SET
-		     file_hash = EXCLUDED.file_hash,
-		     char_count = EXCLUDED.char_count,
-		     chunk_count = EXCLUDED.chunk_count,
-		     ingest_time = CURRENT_TIMESTAMP
-		 RETURNING id`,
-		source, path, hash, charCount, chunkCount,
-	).Scan(&id)
-	if err != nil {
-		logger.Error(ctx, "Document insert failed",
-			slog.String("file", path),
-			slog.Any("err", err))
-		return 0, err
+// Close releases all held resources.
+func (a *Application) Close() {
+	if a.DB != nil {
+		_ = a.DB.Close(context.Background())
 	}
-	logger.Info(ctx, "Stored document metadata",
-		slog.Int64("doc_id", id),
-		slog.String("file", filepath.Base(path)))
-	return id, nil
 }
 
-// IsDocumentUpToDate checks if a document with the given file path and hash already exists in the database, indicating it has not changed since last ingestion.
-func (s *Services) IsDocumentUpToDate(ctx context.Context, filePath, currentHash string) (bool, error) {
-	var storedHash string
-	err := s.DB.QueryRow(ctx,
-		`SELECT file_hash FROM documents WHERE file_path = $1`,
-		filePath,
-	).Scan(&storedHash)
-	if err == pgx.ErrNoRows {
-		return false, nil // not found → process
+// migrate ensures the required tables and columns exist.
+func migrate(ctx context.Context, db *pgx.Conn) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS documents (
+			id          BIGSERIAL PRIMARY KEY,
+			source_name TEXT NOT NULL,
+			file_path   TEXT UNIQUE NOT NULL,
+			file_hash   TEXT NOT NULL,
+			char_count  INTEGER NOT NULL,
+			chunk_count INTEGER NOT NULL,
+			ingest_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS chunks (
+			id          BIGSERIAL PRIMARY KEY,
+			document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+			chunk_index INTEGER NOT NULL,
+			chunk_text  TEXT NOT NULL,
+			chapter     TEXT,
+			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (document_id, chunk_index)
+		)`,
+		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedding vector(768)`,
+		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS section_level INTEGER NOT NULL DEFAULT 0`,
 	}
-	if err != nil {
-		return false, err
-	}
-	return storedHash == currentHash, nil
-}
 
-// StoreChunks inserts or updates the text chunks of a document in the database.
-func (s *Services) StoreChunks(ctx context.Context, docID int64, chunks []EnrichedChunk) error {
-	for i, chunk := range chunks {
-		_, err := s.DB.Exec(ctx,
-			`INSERT INTO chunks (document_id, chunk_index, chunk_text,chapter)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (document_id, chunk_index) DO UPDATE SET
-                 chunk_text = EXCLUDED.chunk_text`,
-			docID, i, chunk.Text, chunk.Chapter,
-		)
-		if err != nil {
-			logger.Error(ctx, "Chunk insert failed",
-				slog.Int64("doc_id", docID),
-				slog.Int("index", i),
-				slog.Any("err", err))
+	for _, s := range stmts {
+		if _, err := db.Exec(ctx, s); err != nil {
+			logger.Error(ctx, "Migration failed", slog.Any("err", err))
 			return err
 		}
 	}
-	logger.Info(ctx, "Stored chunks",
-		slog.Int64("doc_id", docID),
-		slog.Int("chunk_count", len(chunks)))
 	return nil
 }
 
-// EmbedChunks generates embeddings for all chunks of a document using Ollama
-func (s *Services) EmbedChunks(ctx context.Context, docID int64, chunks []string) error {
-	if len(chunks) == 0 {
-		return nil
-	}
-
-	logger.Info(ctx, "Starting embedding",
-		slog.Int64("doc_id", docID),
-		slog.Int("chunk_count", len(chunks)))
-
-	baseURL, err := url.Parse("http://localhost:11434")
+// checkOllama verifies that the Ollama server is reachable before any command runs.
+func checkOllama(ctx context.Context, baseURL string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(baseURL) //nolint:noctx
 	if err != nil {
-		panic(err)
-	}
-
-	httpClient := &http.Client{}
-
-	client := api.NewClient(baseURL, httpClient)
-
-	for i, chunk := range chunks {
-		resp, err := client.Embed(ctx, &api.EmbedRequest{
-			Model: "nomic-embed-text",
-			Input: []string{chunk},
-		})
-		if err != nil {
-			logger.Error(ctx, "Embedding failed for chunk",
-				slog.Int64("doc_id", docID),
-				slog.Int("chunk_index", i),
-				slog.Any("err", err))
-			return err
-		}
-
-		if len(resp.Embeddings) == 0 {
-			continue
-		}
-
-		// Build correct Postgres vector string: [0.123,-0.456,...]
-		vec := resp.Embeddings[0]
-		var sb strings.Builder
-		sb.WriteString("[")
-		for j, v := range vec {
-			if j > 0 {
-				sb.WriteString(",")
-			}
-			sb.WriteString(fmt.Sprintf("%f", v))
-		}
-		sb.WriteString("]")
-
-		// Store it
-		_, err = s.DB.Exec(ctx,
-			`UPDATE chunks 
-			 SET embedding = $1::vector 
-			 WHERE document_id = $2 AND chunk_index = $3`,
-			sb.String(), docID, i,
+		logger.Error(ctx, "Ollama unreachable",
+			slog.String("url", baseURL),
+			slog.String("hint", "run: brew services start ollama"),
 		)
-		if err != nil {
-			logger.Error(ctx, "Failed to store embedding", slog.Any("err", err))
-			return err
-		}
+		return fmt.Errorf("ollama is not running at %s — start it with: brew services start ollama", baseURL)
 	}
-
-	logger.Info(ctx, "Embeddings stored successfully",
-		slog.Int64("doc_id", docID),
-		slog.Int("chunk_count", len(chunks)))
-
+	_ = resp.Body.Close()
+	logger.Info(ctx, "Ollama connected", slog.String("url", baseURL))
 	return nil
-}
-
-// Summarize turns the retrieved chunks into a natural, concise answer using llama3.2
-func (s *Services) Summarize(ctx context.Context, question string, results []Result) (string, error) {
-	if len(results) == 0 {
-		return "I couldn't find any relevant information in your knowledge base.", nil
-	}
-
-	// Build context
-	var contextBuilder strings.Builder
-	for _, r := range results {
-		contextBuilder.WriteString(fmt.Sprintf("From %s:\n%s\n\n", r.File, r.Text))
-	}
-
-	prompt := fmt.Sprintf(`You are a helpful, concise assistant. 
-Answer the question using ONLY the provided context.
-If the context doesn't contain enough information, say "I don't have enough information."
-
-Question: %s
-
-Context:
-%s
-
-Answer:`, question, contextBuilder.String())
-
-	// Correct way to call Generate (current Ollama Go client)
-	baseURL, _ := url.Parse("http://localhost:11434")
-	client := api.NewClient(baseURL, &http.Client{})
-
-	var answer strings.Builder
-
-	err := client.Generate(ctx, &api.GenerateRequest{
-		Model:  "llama3.2",
-		Prompt: prompt,
-	}, func(resp api.GenerateResponse) error {
-		answer.WriteString(resp.Response)
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-
-	return answer.String(), nil
-}
-
-// Close cleans up resources
-func (s *Services) Close() {
-	if s.DB != nil {
-		_ = s.DB.Close(context.Background())
-	}
 }
 
 func maskDSN(dsn string) string {
