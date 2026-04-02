@@ -44,13 +44,13 @@ func ExtractMarkdown(path string) ([]Span, error) {
 		h1Size   = 24.0
 		h2Size   = 16.0
 		h3Size   = 13.2
-		lineH    = 14.0  // body line height — keeps consecutive lines < 20pt apart (merge threshold)
-		codeH    = 12.0  // code line height — keeps consecutive lines < 14pt apart (code merge threshold)
-		paraGap  = 30.0  // blank-line gap — forces a new paragraph block (> 20pt threshold)
+		lineH    = 14.0 // body line height — keeps consecutive lines < 20pt apart (merge threshold)
+		codeH    = 12.0 // code line height — keeps consecutive lines < 14pt apart (code merge threshold)
+		paraGap  = 30.0 // blank-line gap — forces a new paragraph block (> 20pt threshold)
 	)
 
 	var spans []Span
-	var y float64 = 50.0
+	y := 50.0
 	page := 1
 	inCode := false
 
@@ -152,7 +152,7 @@ func ExtractPlainText(path string) ([]Span, error) {
 	)
 
 	var spans []Span
-	var y float64 = 50.0
+	y := 50.0
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -195,11 +195,11 @@ func parseATXHeading(line string) (int, string, bool) {
 }
 
 var (
-	reBoldItalic  = regexp.MustCompile(`\*{1,3}([^*]+)\*{1,3}`)
-	reInlineCode  = regexp.MustCompile("`([^`]+)`")
-	reLink        = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	reBoldItalic    = regexp.MustCompile(`\*{1,3}([^*]+)\*{1,3}`)
+	reInlineCode    = regexp.MustCompile("`([^`]+)`")
+	reLink          = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
 	reStrikethrough = regexp.MustCompile(`~~([^~]+)~~`)
-	reHTMLTag     = regexp.MustCompile(`<[^>]+>`)
+	reHTMLTag       = regexp.MustCompile(`<[^>]+>`)
 )
 
 // stripInlineMarkdown removes inline formatting markers, returning plain text.

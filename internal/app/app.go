@@ -158,7 +158,7 @@ func checkOllama(ctx context.Context, baseURL string) error {
 		)
 		return fmt.Errorf("ollama is not running at %s — start it with: brew services start ollama", baseURL)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	logger.Info(ctx, "Ollama connected", slog.String("url", baseURL))
 	return nil
 }
