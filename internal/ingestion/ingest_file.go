@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -55,16 +54,11 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 		slog.String("file_path", path),
 	)
 
-	// 3. Extract spans from PDF
+	// 3. Extract spans
 	t := time.Now()
-	data, err := layout.ExtractPDF(path)
+	spans, err := layout.Extract(path)
 	if err != nil {
 		return false, fmt.Errorf("extract %s: %w", path, err)
-	}
-
-	var spans []layout.Span
-	if err := json.Unmarshal(data, &spans); err != nil {
-		return false, fmt.Errorf("unmarshal spans: %w", err)
 	}
 	logger.Debug(ctx, "file.extracted",
 		slog.String("component", "ingestion"),
@@ -101,7 +95,25 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 	// 5. Chunk
 	chunks := layout.ChunkSections(sections, 5)
 	if len(chunks) == 0 {
-		return false, fmt.Errorf("no chunks produced from %s", path)
+		if len(blocks) == 0 {
+			logger.Info(ctx, "file.skipped",
+				slog.String("component", "ingestion"),
+				slog.String("event", "file.skipped"),
+				slog.String("source", source),
+				slog.String("file_path", path),
+				slog.String("reason", "no_content"),
+			)
+			return false, nil
+		}
+		// No heading structure detected — treat the entire document as one flat section.
+		logger.Info(ctx, "file.flat_fallback",
+			slog.String("component", "ingestion"),
+			slog.String("event", "file.flat_fallback"),
+			slog.String("file_path", path),
+			slog.String("reason", "no_sections_detected"),
+		)
+		flat := layout.Section{Title: "Document", Level: 1, Content: blocks}
+		chunks = layout.ChunkSections([]layout.Section{flat}, 5)
 	}
 
 	// 6. Render chunks to enriched text

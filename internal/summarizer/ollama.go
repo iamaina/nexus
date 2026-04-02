@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/iamaina/nexus/internal/models"
@@ -30,6 +31,17 @@ func New(baseURL, model string) (*OllamaSummarizer, error) {
 	}, nil
 }
 
+// Model returns the generation model name currently configured.
+func (s *OllamaSummarizer) Model() string {
+	return s.model
+}
+
+// WithModel returns a copy of the summarizer using a different generation model.
+// The Ollama client is reused so there is no reconnection overhead.
+func (s *OllamaSummarizer) WithModel(model string) *OllamaSummarizer {
+	return &OllamaSummarizer{client: s.client, model: model}
+}
+
 // Summarize produces a concise answer to question using the provided results as context.
 func (s *OllamaSummarizer) Summarize(ctx context.Context, question string, results []models.Result) (string, error) {
 	if len(results) == 0 {
@@ -37,13 +49,23 @@ func (s *OllamaSummarizer) Summarize(ctx context.Context, question string, resul
 	}
 
 	var ctxBuilder strings.Builder
-	for _, r := range results {
-		fmt.Fprintf(&ctxBuilder, "From %s:\n%s\n\n", r.File, r.Text)
+	for i, r := range results {
+		book := strings.TrimSuffix(filepath.Base(r.File), filepath.Ext(r.File))
+		source := book
+		if r.Chapter != "" {
+			source = fmt.Sprintf("%s — %s", book, r.Chapter)
+		}
+		fmt.Fprintf(&ctxBuilder, "[%d] %s\n%s\n\n", i+1, source, r.Text)
 	}
 
-	prompt := fmt.Sprintf(`You are a helpful, concise assistant.
-Answer the question using ONLY the provided context.
-If the context doesn't contain enough information, say "I don't have enough information."
+	prompt := fmt.Sprintf(`You are a knowledgeable assistant with access to a personal library.
+Answer the question thoroughly using the numbered context passages below.
+Rules:
+- Cite sources inline using their label, e.g. "According to [1] Pro Git — Git Basics, ..."
+- When multiple passages cover the same topic, synthesise them into one coherent explanation
+- Include specific details, comparisons, and examples that appear in the passages
+- Do not invent URLs, page numbers, or any information not present in the passages
+- If the context genuinely does not contain enough information, say so briefly
 
 Question: %s
 

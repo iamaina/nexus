@@ -65,19 +65,50 @@ func (m *ChunkModel) StoreEmbeddings(ctx context.Context, docID int64, embedding
 }
 
 // Search performs a vector similarity search and returns the top results.
-func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int) ([]Result, error) {
-	rows, err := m.DB.Query(ctx, `
-		SELECT
-			d.file_path,
-			c.chunk_text,
-			1 - (c.embedding <=> $1::vector) AS similarity
-		FROM chunks c
-		JOIN documents d ON c.document_id = d.id
-		WHERE c.embedding IS NOT NULL
-		ORDER BY c.embedding <=> $1::vector
-		LIMIT $2`,
-		vectorToString(queryVec), limit,
-	)
+// If source is non-empty, results are restricted to documents whose source_name
+// contains that string (case-insensitive), e.g. "progit" or "lets-go".
+func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, source string) ([]Result, error) {
+	var rows pgx.Rows
+	var err error
+
+	vec := vectorToString(queryVec)
+	if source == "" {
+		rows, err = m.DB.Query(ctx, `
+			SELECT
+				c.document_id,
+				c.chunk_index,
+				COALESCE(c.section_level, 0),
+				d.file_path,
+				COALESCE(c.chapter, '') AS chapter,
+				c.chunk_text,
+				1 - (c.embedding <=> $1::vector) AS similarity
+			FROM chunks c
+			JOIN documents d ON c.document_id = d.id
+			WHERE c.embedding IS NOT NULL
+			ORDER BY c.embedding <=> $1::vector
+			LIMIT $2`,
+			vec, limit,
+		)
+	} else {
+		rows, err = m.DB.Query(ctx, `
+			SELECT
+				c.document_id,
+				c.chunk_index,
+				COALESCE(c.section_level, 0),
+				d.file_path,
+				COALESCE(c.chapter, '') AS chapter,
+				c.chunk_text,
+				1 - (c.embedding <=> $1::vector) AS similarity
+			FROM chunks c
+			JOIN documents d ON c.document_id = d.id
+			WHERE c.embedding IS NOT NULL
+			  AND (d.source_name ILIKE '%' || $3 || '%'
+			       OR d.file_path ILIKE '%' || $3 || '%')
+			ORDER BY c.embedding <=> $1::vector
+			LIMIT $2`,
+			vec, limit, source,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -86,12 +117,59 @@ func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int) 
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.File, &r.Text, &r.Score); err != nil {
+		if err := rows.Scan(&r.DocumentID, &r.ChunkIndex, &r.Level, &r.File, &r.Chapter, &r.Text, &r.Score); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// FetchContext returns chunks that provide context for the given matched chunk:
+// - continuation chunks (same level, same chapter — the section was split across multiple chunks)
+// - child chunks (deeper level — subsections)
+// Both are bounded by the next sibling or ancestor heading. At most maxChunks are returned.
+// Score is set to 0 to distinguish them from direct vector matches.
+func (m *ChunkModel) FetchContext(ctx context.Context, parent Result, maxChunks int) ([]Result, error) {
+	rows, err := m.DB.Query(ctx, `
+		SELECT
+			c.document_id,
+			c.chunk_index,
+			COALESCE(c.section_level, 0),
+			d.file_path,
+			COALESCE(c.chapter, '') AS chapter,
+			c.chunk_text
+		FROM chunks c
+		JOIN documents d ON c.document_id = d.id
+		WHERE c.document_id = $1
+		  AND c.chunk_index > $2
+		  AND c.chunk_index < (
+		      SELECT COALESCE(MIN(chunk_index), 2147483647)
+		      FROM chunks
+		      WHERE document_id = $1
+		        AND chunk_index > $2
+		        AND section_level <= $3
+		        AND chapter != $4
+		  )
+		ORDER BY c.chunk_index
+		LIMIT $5`,
+		parent.DocumentID, parent.ChunkIndex, parent.Level, parent.Chapter, maxChunks,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var children []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.DocumentID, &r.ChunkIndex, &r.Level, &r.File, &r.Chapter, &r.Text); err != nil {
+			return nil, err
+		}
+		// Score=0 marks this as a context expansion, not a direct vector match
+		children = append(children, r)
+	}
+	return children, rows.Err()
 }
 
 // ListChaptersByBook returns distinct non-empty chapter names for documents whose

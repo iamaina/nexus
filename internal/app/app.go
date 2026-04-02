@@ -3,8 +3,11 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/iamaina/nexus/internal/config"
 	"github.com/iamaina/nexus/internal/embedder"
@@ -66,14 +69,29 @@ func New() (*Application, error) {
 	}
 
 	// 5. Ollama clients
-	const ollamaURL = "http://localhost:11434"
+	ollamaURL := config.C.Ollama.BaseURL
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	embModel := config.C.Ollama.EmbeddingModel
+	if embModel == "" {
+		embModel = "nomic-embed-text"
+	}
+	genModel := config.C.Ollama.GenerationModel
+	if genModel == "" {
+		genModel = "llama3.2"
+	}
 
-	emb, err := embedder.New(ollamaURL, "nomic-embed-text")
+	if err := checkOllama(ctx, ollamaURL); err != nil {
+		return nil, err
+	}
+
+	emb, err := embedder.New(ollamaURL, embModel)
 	if err != nil {
 		return nil, err
 	}
 
-	sum, err := summarizer.New(ollamaURL, "llama3.2")
+	sum, err := summarizer.New(ollamaURL, genModel)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +144,22 @@ func migrate(ctx context.Context, db *pgx.Conn) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// checkOllama verifies that the Ollama server is reachable before any command runs.
+func checkOllama(ctx context.Context, baseURL string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(baseURL) //nolint:noctx
+	if err != nil {
+		logger.Error(ctx, "Ollama unreachable",
+			slog.String("url", baseURL),
+			slog.String("hint", "run: brew services start ollama"),
+		)
+		return fmt.Errorf("ollama is not running at %s — start it with: brew services start ollama", baseURL)
+	}
+	resp.Body.Close()
+	logger.Info(ctx, "Ollama connected", slog.String("url", baseURL))
 	return nil
 }
 
