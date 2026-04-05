@@ -3,13 +3,26 @@ package models
 
 // Document represents metadata for an ingested file stored in the database.
 type Document struct {
-	ID         int64
-	SourceName string
-	FilePath   string
-	FileHash   string
-	CharCount  int
-	ChunkCount int
-	IngestTime string
+	ID          int64
+	SourceName  string
+	FilePath    string
+	FileHash    string
+	CharCount   int
+	ChunkCount  int
+	IngestTime  string
+	DocType     string
+	Language    string
+	Institution string
+	DocDate     string
+}
+
+// DocMeta carries optional classification metadata written to the documents table.
+// It is nil for batch ingestion (nexus ingest) and populated by nexus file.
+type DocMeta struct {
+	DocType     string // e.g. "bank_statement", "id_document"
+	Language    string // BCP-47 code: "en", "nl"
+	Institution string // issuing organisation, empty if unknown
+	DocDate     string // YYYY-MM-DD or YYYY-MM, empty if unknown
 }
 
 // EnrichedChunk is a rendered chunk ready for storage — text, heading context, and level.
