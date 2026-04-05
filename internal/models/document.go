@@ -74,18 +74,32 @@ func (m *DocumentModel) List(ctx context.Context, source string) ([]Document, er
 }
 
 // Insert upserts document metadata and returns the document ID.
-func (m *DocumentModel) Insert(ctx context.Context, source, path, hash string, charCount, chunkCount int) (int64, error) {
+// meta may be nil for batch ingestion; when provided the classification
+// columns (doc_type, language, institution, doc_date) are stored too.
+func (m *DocumentModel) Insert(ctx context.Context, source, path, hash string, charCount, chunkCount int, meta *DocMeta) (int64, error) {
+	var docType, language, institution, docDate string
+	if meta != nil {
+		docType = meta.DocType
+		language = meta.Language
+		institution = meta.Institution
+		docDate = meta.DocDate
+	}
+
 	var id int64
 	err := m.DB.QueryRow(ctx,
-		`INSERT INTO documents (source_name, file_path, file_hash, char_count, chunk_count)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO documents (source_name, file_path, file_hash, char_count, chunk_count, doc_type, language, institution, doc_date)
+		 VALUES ($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), NULLIF($9,''))
 		 ON CONFLICT (file_path) DO UPDATE SET
 		     file_hash    = EXCLUDED.file_hash,
 		     char_count   = EXCLUDED.char_count,
 		     chunk_count  = EXCLUDED.chunk_count,
+		     doc_type     = COALESCE(EXCLUDED.doc_type,    documents.doc_type),
+		     language     = COALESCE(EXCLUDED.language,    documents.language),
+		     institution  = COALESCE(EXCLUDED.institution, documents.institution),
+		     doc_date     = COALESCE(EXCLUDED.doc_date,    documents.doc_date),
 		     ingest_time  = CURRENT_TIMESTAMP
 		 RETURNING id`,
-		source, path, hash, charCount, chunkCount,
+		source, path, hash, charCount, chunkCount, docType, language, institution, docDate,
 	).Scan(&id)
 	if err != nil {
 		logger.Error(ctx, "Document insert failed",

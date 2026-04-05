@@ -10,6 +10,7 @@ import (
 	"github.com/iamaina/nexus/internal/classifier"
 	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/models"
 	"github.com/spf13/cobra"
 )
 
@@ -98,9 +99,15 @@ Examples:
 		}
 		fmt.Printf("  Moved → %s\n", destPath)
 
-		// 5. Ingest
+		// 5. Ingest — pass classification metadata so it's stored in the documents table
 		fmt.Printf("  Ingesting ...\n")
-		ingested, err := ingestion.IngestFile(ctx, a, destPath, "personal", false)
+		meta := &models.DocMeta{
+			DocType:     cl.DocType,
+			Language:    cl.Language,
+			Institution: cl.Institution,
+			DocDate:     cl.Date,
+		}
+		ingested, err := ingestion.IngestFile(ctx, a, destPath, "personal", false, meta)
 		if err != nil {
 			logger.Error(ctx, fmt.Sprintf("Ingest failed: %v", err))
 			return

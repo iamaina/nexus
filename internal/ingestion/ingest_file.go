@@ -20,7 +20,8 @@ import (
 // IngestFile runs the full pipeline for a single file:
 // extract → layout → chunk → store text → embed → store embeddings.
 // Returns true if the file was ingested, false if it was skipped (up to date).
-func IngestFile(ctx context.Context, a *app.Application, path, source string, force bool) (bool, error) {
+// meta is optional classification metadata (nil for batch ingest).
+func IngestFile(ctx context.Context, a *app.Application, path, source string, force bool, meta *models.DocMeta) (bool, error) {
 	start := time.Now()
 
 	// 1. Hash the file for deduplication
@@ -151,7 +152,7 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 	)
 
 	// 7. Store document metadata
-	docID, err := a.Documents.Insert(ctx, source, path, hash, charCount, len(chunks))
+	docID, err := a.Documents.Insert(ctx, source, path, hash, charCount, len(chunks), meta)
 	if err != nil {
 		return false, fmt.Errorf("store document: %w", err)
 	}
