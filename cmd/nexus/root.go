@@ -4,6 +4,7 @@ package nexus
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/iamaina/nexus/internal/config"
 	"github.com/spf13/cobra"
@@ -11,9 +12,43 @@ import (
 
 var cfgFile, logLevel string
 
-// Version is set at build time via -ldflags "-X github.com/iamaina/nexus/cmd/nexus.Version=<tag>".
-// Falls back to "dev" when built with plain `go run` or `go build` without flags.
-var Version = "dev"
+// buildVersion is the ldflags injection target — must stay a plain string literal.
+// Set by: go build -ldflags "-X github.com/iamaina/nexus/cmd/nexus.buildVersion=v1.2.3"
+var buildVersion = ""
+
+// Version is the resolved version used throughout the binary.
+// Priority: ldflags tag > VCS commit hash embedded by Go toolchain > "dev".
+var Version = resolveVersion()
+
+func resolveVersion() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
+	// Fall back to the commit hash Go embeds automatically since 1.18.
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	var rev string
+	var dirty bool
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) >= 7 {
+				rev = s.Value[:7]
+			}
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "dev"
+	}
+	if dirty {
+		return "dev+" + rev + "-dirty"
+	}
+	return "dev+" + rev
+}
 
 // RootCmd is the root command for the nexus CLI.
 var RootCmd = &cobra.Command{
