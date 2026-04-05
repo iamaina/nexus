@@ -251,13 +251,16 @@ setup:
 lint:
 	mise run lint
 
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -ldflags "-X github.com/iamaina/nexus/cmd/nexus.Version=$(VERSION)"
+
 build:
-	go build -o nexus ./cmd/nexus
-	@echo "✅ Built nexus binary"
+	go build $(LDFLAGS) -o nexus .
+	@echo "✅ Built nexus $(VERSION)"
 
 install:
-	go build -o ~/.local/bin/nexus ./cmd/nexus
-	@echo "✅ nexus installed to ~/.local/bin"
+	go build $(LDFLAGS) -o ~/.local/bin/nexus .
+	@echo "✅ nexus $(VERSION) installed to ~/.local/bin"
 
 ingest:
 	@if [ "$(force)" = "1" ]; then \
