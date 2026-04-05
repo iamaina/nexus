@@ -63,7 +63,7 @@ var ingestCmd = &cobra.Command{
 					if ext != strings.ToLower(e) {
 						continue
 					}
-					ingested, err := ingestion.IngestFile(ctx, a, path, src.Name, force)
+					ingested, err := ingestion.IngestFile(ctx, a, path, src.Name, force, nil)
 					if err != nil {
 						logger.Error(ctx, "file.failed",
 							slog.String("component", "ingestion"),
