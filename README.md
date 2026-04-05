@@ -2,7 +2,7 @@
 
 **Your personal local knowledge vault** — fully offline RAG for PDFs, Markdown, and text.
 
-Built for SREs who want complete control: no cloud, no subscriptions, no data leaving your machine.
+Built for engineers who want complete control: no cloud, no subscriptions, no data leaving your machine.
 
 ## Quick Start
 
@@ -12,25 +12,33 @@ make ingest
 make query question="What is the staging area in Git?"
 ```
 
+---
+
 ## Features
 
-- Ingestion from PDFs, Markdown, and plain text
-- Automatic deduplication (by content hash)
-- Local embeddings using `nomic-embed-text`
-- Semantic search + summarization with `llama3.2`
-- Everything runs on your laptop
+- Structure-aware PDF ingestion — reconstructs heading hierarchy, paragraphs, code blocks, lists, and images
+- Automatic deduplication by content hash (SHA-256)
+- Batched local embeddings via `nomic-embed-text` (Ollama)
+- Semantic search with pgvector cosine similarity
+- Summarized answers via `llama3.2` (Ollama)
+- Chapter/section listing from ingested documents
+- Layout debug command for inspecting the full pipeline
+- Coloured terminal logs; JSON logs when piped (Loki/Grafana compatible)
+- Fully offline — nothing leaves your machine
 
 ---
 
-## Full Installation
+## Installation
 
-### 1. Bootstrap tools (once)
+### 1. Bootstrap tools
 
-```Bash
+```bash
 make bootstrap
 ```
 
-#### 2. Full setup (database + config + models)
+Installs Go, golangci-lint, and other tools via `mise`.
+
+### 2. First-time setup
 
 ```bash
 make setup
@@ -38,25 +46,20 @@ make setup
 
 This will:
 
-- Start `PostgreSQL`
-- Create the `opsnexus` database and `vaultuser`
-- Install `pgvector`
-- Pull Ollama models
-- Ask you for your document folders and generate `config.yaml`
+- Create a Python venv and install PyMuPDF (PDF extraction)
+- Start PostgreSQL and create the `opsnexus` database and `vaultuser` role
+- Install the `pgvector` extension
+- Pull Ollama models (`nomic-embed-text`, `llama3.2`)
+- Ask for your document folders and write `config.yaml`
 
-#### 3. First ingestion
-
-```bash
-make ingest
-```
-
-Use `--force` to re-process everything:
+### 3. Ingest documents
 
 ```bash
-make ingest force=1
+make ingest          # ingest all sources from config.yaml
+make ingest force=1  # force re-ingest (ignore dedup)
 ```
 
-#### 4. Query your knowledge
+### 4. Query your knowledge
 
 ```bash
 make query question="What is the staging area in Git?"
@@ -64,38 +67,121 @@ make query question="What is the staging area in Git?"
 
 ---
 
-## Project Structure
+## Commands
+
+### `nexus ingest`
+
+Walks all configured source directories and ingests any new or changed files.
 
 ```bash
+nexus ingest
+nexus ingest --force    # re-ingest everything
+```
+
+### `nexus query`
+
+Embeds your question, searches for relevant chunks, and generates an answer.
+
+```bash
+nexus query "How do I rebase interactively?"
+nexus query --threshold 0.7 "What is a detached HEAD?"
+```
+
+### `nexus chapters`
+
+Lists the top-level chapters detected in an ingested document.
+
+```bash
+nexus chapters ~/Documents/knowledge-drop/progit.pdf
+```
+
+### `nexus layout`
+
+Debug tool for inspecting the layout pipeline on any PDF. Useful when tuning heading detection or chunk quality.
+
+```bash
+nexus layout <pdf>                                         # pipeline summary
+nexus layout --fonts <pdf>                                 # font distribution + heading size candidates
+nexus layout --headings <pdf>                              # all detected headings (level, font, page)
+nexus layout --tree <pdf>                                  # heading tree structure
+nexus layout --blocks <pdf>                                # all blocks with type and content preview
+nexus layout --sections <pdf>                              # full section hierarchy
+nexus layout --chunks <pdf>                                # final chunks
+nexus layout --chunks --page-from 1 --page-to 20 <pdf>    # page-filtered
+
+# via Makefile
+make layout file=~/Documents/progit.pdf
+make layout file=~/Documents/progit.pdf flags="--chunks --page-from 1 --page-to 10"
+```
+
+---
+
+## Project Structure
+
+```
 nexus/
-├── cmd
-│   └── nexus
-│       ├── ingest.go
-│       ├── query.go
-│       └── root.go
-├── internal
-│   ├── app
-│   │   └── app.go
-│   ├── config
-│   │   └── config.go
-│   ├── ingestion
-│   │   ├── chunker.go
-│   │   ├── extract.go
-│   │   └── ingest_file.go
-│   └──logger
-│       └── logger.go
+├── cmd/nexus/
+│   ├── root.go          CLI entry, context wiring
+│   ├── ingest.go        nexus ingest
+│   ├── query.go         nexus query
+│   ├── chapters.go      nexus chapters
+│   └── layout.go        nexus layout (pipeline debugger)
+├── internal/
+│   ├── app/             Application struct, DB init, auto-migrations
+│   ├── config/          YAML config loader, env overrides
+│   ├── embedder/        Batched Ollama embedding
+│   ├── ingestion/       Per-file ingestion pipeline
+│   ├── layout/          PDF layout engine (stable)
+│   ├── logger/          Coloured terminal + JSON structured logging
+│   ├── models/          DocumentModel, ChunkModel (pgx)
+│   └── summarizer/      Ollama generation
+├── scripts/
+│   └── extract_pdf.py   PyMuPDF span extractor
 ├── main.go
 ├── Makefile
-└──  README.md
+└── config.yaml          (gitignored)
 ```
+
+---
+
+## Configuration (`config.yaml`)
+
+Generated by `make setup`. Example:
+
+```yaml
+sources:
+  - name: books
+    path: ~/Documents/knowledge-drop
+    extensions:
+      - .pdf
+      - .md
+      - .txt
+  - name: intelligence
+    path: ~/ops-nexus/intelligence
+    extensions:
+      - .pdf
+
+postgres:
+  dsn: "postgres://vaultuser:${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"
+
+relevanceThreshold: 0.65
+logLevel: info          # debug | info | warn | error
+```
+
+Set `NEXUS_LOG_LEVEL=debug` to override without editing the file.
+
+---
 
 ## Common Commands
 
 | Command | Description |
-| ------- | ----------- |
+|---------|-------------|
 | `make setup` | Full first-time setup |
-| `make ingest` | Ingest all documents |
+| `make ingest` | Ingest all configured sources |
+| `make ingest force=1` | Force re-ingest everything |
 | `make query question="..."` | Ask a question |
-| `make lint` | Run linter |
-| `make build` | Build the binary |
-| `make cleanup` | Delete DB + config (fresh start) |
+| `make layout file=<pdf>` | Debug pipeline for a PDF |
+| `make lint` | Run golangci-lint |
+| `make build` | Build binary to `./nexus` |
+| `make install` | Install to `~/.local/bin` |
+| `make cleanup` | Delete DB, config, and binary |
