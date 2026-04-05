@@ -19,14 +19,27 @@ type Source struct {
 	Extensions []string `yaml:"extensions"`
 }
 
+// Personal holds configuration for the personal document safe (Mode 1).
+type Personal struct {
+	WatchDirs []string `yaml:"watchDirs"`
+	DestDir   string   `yaml:"destDir"`
+}
+
 // Config represents the overall configuration for the nexus application, including document sources, database connection info, logging level, and relevance threshold.
 type Config struct {
 	Sources  []Source `yaml:"sources"`
+	Personal Personal `yaml:"personal"`
 	Postgres struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"postgres"`
+	Ollama struct {
+		BaseURL             string `yaml:"baseURL"`
+		EmbeddingModel      string `yaml:"embeddingModel"`
+		GenerationModel     string `yaml:"generationModel"`
+		ClassificationModel string `yaml:"classificationModel"`
+	} `yaml:"ollama"`
 	LogLevel           *string `yaml:"log_level"`
-	RelevanceThreshold float32 `yaml:"relevanceThreshold"`
+	RelevanceThreshold float64 `yaml:"relevanceThreshold"`
 }
 
 // C is the global configuration instance loaded at application startup.
@@ -57,6 +70,14 @@ func Load(cfgPath string) error {
 		p := &C.Sources[i].Path
 		if strings.HasPrefix(*p, "~/") {
 			*p = filepath.Join(home, (*p)[2:])
+		}
+	}
+	if strings.HasPrefix(C.Personal.DestDir, "~/") {
+		C.Personal.DestDir = filepath.Join(home, C.Personal.DestDir[2:])
+	}
+	for i, d := range C.Personal.WatchDirs {
+		if strings.HasPrefix(d, "~/") {
+			C.Personal.WatchDirs[i] = filepath.Join(home, d[2:])
 		}
 	}
 

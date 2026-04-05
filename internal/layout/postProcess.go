@@ -1,4 +1,4 @@
-// postProcess.go contains functions to clean up the heading tree after initial construction.
+// Package layout provides the PDF layout analysis pipeline.
 package layout
 
 import (

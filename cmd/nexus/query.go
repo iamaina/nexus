@@ -4,17 +4,22 @@ package nexus
 import (
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/iamaina/nexus/internal/app"
 	"github.com/iamaina/nexus/internal/logger"
-	"github.com/ollama/ollama/api"
+	"github.com/iamaina/nexus/internal/models"
 	"github.com/spf13/cobra"
 )
 
-var queryThreshold float64
+var (
+	queryThreshold float64
+	querySource    string
+	queryModel     string
+	showSources    bool
+)
 
 var queryCmd = &cobra.Command{
 	Use:   "query [question]",
@@ -22,105 +27,172 @@ var queryCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		services, ok := ctx.Value(app.ServicesKey).(*app.Services)
+
+		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
-			logger.Error(ctx, "Services not found")
+			logger.Error(ctx, "Application not found in context")
 			return
 		}
 
+		queryStart := time.Now()
 		question := args[0]
-		logger.Info(ctx, "Query received", slog.String("question", question))
 
 		threshold := queryThreshold
 		if threshold == 0 {
-			threshold = float64(services.Config.RelevanceThreshold) // your existing field
+			threshold = a.Config.RelevanceThreshold
 		}
 		if threshold == 0 {
-			threshold = 0.65
+			threshold = 0.70
 		}
-		logger.Info(ctx, "Using relevance threshold", slog.Float64("threshold", threshold))
+		// Resolve summarizer — use --model override if provided
+		sum := a.Summarizer
+		if queryModel != "" {
+			sum = a.Summarizer.WithModel(queryModel)
+		}
 
-		// Embed question
-		baseURL, _ := url.Parse("http://localhost:11434")
-		client := api.NewClient(baseURL, &http.Client{})
+		logArgs := []any{
+			slog.String("component", "query"),
+			slog.String("event", "query.start"),
+			slog.Float64("threshold", threshold),
+			slog.String("model", sum.Model()),
+		}
+		if querySource != "" {
+			logArgs = append(logArgs, slog.String("source", querySource))
+		}
+		logger.Info(ctx, "query.start", logArgs...)
 
-		resp, err := client.Embed(ctx, &api.EmbedRequest{
-			Model: "nomic-embed-text",
-			Input: []string{question},
-		})
+		// Embed the question
+		t := time.Now()
+		embeddings, err := a.Embedder.Embed(ctx, []string{question})
 		if err != nil {
-			logger.Error(ctx, "Embedding failed", slog.Any("err", err))
+			logger.Error(ctx, "query.embed_failed",
+				slog.String("component", "query"),
+				slog.String("event", "query.embed_failed"),
+				slog.Any("err", err))
 			return
 		}
-
-		queryVec := resp.Embeddings[0]
-		logger.Info(ctx, "Question embedded", slog.Int("dim", len(queryVec)))
-
-		// Convert to Postgres vector string
-		vectorStr := vectorToString(queryVec)
-
-		// Retrieve chunks
-
-		var results []app.Result
-		rows, err := services.DB.Query(ctx, `
-			SELECT 
-				d.file_path,
-				c.chunk_text,
-				1 - (c.embedding <=> $1::vector) as similarity
-			FROM chunks c
-			JOIN documents d ON c.document_id = d.id
-			ORDER BY c.embedding <=> $1::vector
-			LIMIT 8`,
-			vectorStr,
+		queryVec := embeddings[0]
+		logger.Debug(ctx, "query.embedded",
+			slog.String("component", "query"),
+			slog.String("event", "query.embedded"),
+			slog.Int("dim", len(queryVec)),
+			slog.Int64("duration_ms", time.Since(t).Milliseconds()),
 		)
+
+		// Vector search
+		t = time.Now()
+		candidates, err := a.Chunks.Search(ctx, queryVec, 15, querySource)
 		if err != nil {
-			logger.Error(ctx, "Search failed", slog.Any("err", err))
+			logger.Error(ctx, "query.search_failed",
+				slog.String("component", "query"),
+				slog.String("event", "query.search_failed"),
+				slog.Any("err", err))
 			return
 		}
-		defer rows.Close()
+
+		// Filter by threshold; drop title-only placeholder chunks (< 80 chars)
+		var matched []models.Result
+		for _, r := range candidates {
+			if r.Score >= threshold && len(strings.TrimSpace(r.Text)) > 80 {
+				matched = append(matched, r)
+			}
+		}
+
+		// Expand each matched chunk with its structural children
+		seen := make(map[string]bool)
+		var results []models.Result
+		for _, r := range matched {
+			key := fmt.Sprintf("%d:%d", r.DocumentID, r.ChunkIndex)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			results = append(results, r)
+
+			children, err := a.Chunks.FetchContext(ctx, r, 5)
+			if err != nil {
+				logger.Debug(ctx, "context fetch failed",
+					slog.String("component", "query"),
+					slog.Any("err", err))
+				continue
+			}
+			for _, child := range children {
+				ck := fmt.Sprintf("%d:%d", child.DocumentID, child.ChunkIndex)
+				if !seen[ck] && len(strings.TrimSpace(child.Text)) > 80 {
+					seen[ck] = true
+					results = append(results, child)
+				}
+			}
+		}
+
+		// Hard cap: never send more than 12 chunks to the LLM
+		if len(results) > 12 {
+			results = results[:12]
+		}
+
+		logger.Debug(ctx, "query.search_done",
+			slog.String("component", "query"),
+			slog.String("event", "query.search_done"),
+			slog.Int("candidates", len(candidates)),
+			slog.Int("matched", len(matched)),
+			slog.Int("after_expansion", len(results)),
+			slog.Int64("duration_ms", time.Since(t).Milliseconds()),
+		)
 
 		fmt.Printf("\n🔍 Query: %s\n\n", question)
 
-		for rows.Next() {
-			var r app.Result
-			if err := rows.Scan(&r.File, &r.Text, &r.Score); err != nil {
-				logger.Error(ctx, "Failed to scan row", slog.Any("err", err))
-				continue
-			}
-			if r.Score >= threshold {
-				results = append(results, r)
-			}
-		}
-
 		if len(results) == 0 {
-			fmt.Println("⚠️  No sufficiently relevant information found.")
+			fmt.Println("No sufficiently relevant information found.")
+			fmt.Printf("(%d candidates retrieved, none passed threshold %.2f or minimum length)\n", len(candidates), threshold)
 			return
 		}
 
-		// Generate nice answer
-		answer, err := services.Summarize(ctx, question, results)
+		// --sources: show retrieved chunks before the answer
+		if showSources {
+			fmt.Printf("--- Sources (%d) ---\n", len(results))
+			for i, r := range results {
+				book := strings.TrimSuffix(filepath.Base(r.File), filepath.Ext(r.File))
+				preview := strings.ReplaceAll(strings.TrimSpace(r.Text), "\n", " ")
+				if len(preview) > 120 {
+					preview = preview[:120] + "…"
+				}
+				if r.Score > 0 {
+					fmt.Printf("  [%d] %.2f  %s — %s\n      %s\n", i+1, r.Score, book, r.Chapter, preview)
+				} else {
+					fmt.Printf("  [%d]  ↳   %s — %s\n      %s\n", i+1, book, r.Chapter, preview)
+				}
+			}
+			fmt.Println()
+		}
+
+		// Generate answer
+		t = time.Now()
+		answer, err := sum.Summarize(ctx, question, results)
 		if err != nil {
-			logger.Error(ctx, "Summarization failed", slog.Any("err", err))
+			logger.Error(ctx, "query.summarize_failed",
+				slog.String("component", "query"),
+				slog.String("event", "query.summarize_failed"),
+				slog.Any("err", err))
 			return
 		}
 
-		fmt.Printf("\n🔍 Answer to: %s\n\n%s\n", question, answer)
+		fmt.Printf("Answer:\n\n%s\n", answer)
+
+		logger.Info(ctx, "query.complete",
+			slog.String("component", "query"),
+			slog.String("event", "query.complete"),
+			slog.String("model", sum.Model()),
+			slog.Int("sources", len(results)),
+			slog.Int64("summarize_ms", time.Since(t).Milliseconds()),
+			slog.Int64("total_ms", time.Since(queryStart).Milliseconds()),
+		)
 	},
 }
 
-func vectorToString(vec []float32) string {
-	var sb strings.Builder
-	sb.WriteString("[")
-	for i, v := range vec {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf("%f", v))
-	}
-	sb.WriteString("]")
-	return sb.String()
-}
-
 func init() {
+	queryCmd.Flags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold (overrides config, default 0.70)")
+	queryCmd.Flags().StringVar(&querySource, "source", "", "restrict search to a source or filename (e.g. progit)")
+	queryCmd.Flags().StringVar(&queryModel, "model", "", "generation model to use (overrides config, e.g. llama3.1:8b)")
+	queryCmd.Flags().BoolVar(&showSources, "sources", false, "show retrieved source chunks before the answer")
 	RootCmd.AddCommand(queryCmd)
 }

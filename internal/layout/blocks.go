@@ -1,0 +1,343 @@
+package layout
+
+import (
+	"math"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+// BuildBlocks takes a list of lines and the body font size, and builds a list
+// of blocks, which can be either paragraphs or code snippets. The function uses
+// heuristics to determine whether a line is part of a code block (e.g., based
+// on font, presence of code-like characters) or a regular paragraph. It then
+// groups lines into blocks based on their proximity in the Y coordinate and
+// page number, allowing us to reconstruct the logical structure of the
+// document's content.
+func BuildBlocks(lines []Line, bodyFont float64) []Block {
+	var blocks []Block
+	var paragraphBuffer *Block
+	var codeBuffer *Block
+
+	for i := range lines {
+		l := &lines[i]
+
+		// 🟨 IMAGE DETECTION (FIRST!)
+		if isImageLine(*l) {
+
+			// flush paragraph
+			if paragraphBuffer != nil {
+				blocks = append(blocks, *paragraphBuffer)
+				paragraphBuffer = nil
+			}
+
+			// flush code
+			if codeBuffer != nil {
+				blocks = append(blocks, *codeBuffer)
+				codeBuffer = nil
+			}
+
+			// add image block
+			blocks = append(blocks, Block{
+				Type: BlockImage,
+				Page: l.Page,
+				Y:    l.Y,
+			})
+
+			continue
+		}
+
+		text := strings.TrimSpace(l.Text)
+		if text == "" ||
+			isTOCLine(text) ||
+			isPageNumber(text) {
+			continue
+		}
+
+		// 🟦 CODE DETECTION
+		if isCodeLine(*l) {
+			// flush paragraph BEFORE entering code
+			if paragraphBuffer != nil {
+				blocks = append(blocks, *paragraphBuffer)
+				paragraphBuffer = nil
+			}
+
+			if codeBuffer == nil {
+				codeBuffer = &Block{
+					Type: BlockCode,
+					Text: text,
+					Page: l.Page,
+					Y:    l.Y,
+				}
+			} else {
+				// same block → append with newline
+				if l.Page == codeBuffer.Page && math.Abs(l.Y-codeBuffer.Y) < 14 {
+					codeBuffer.Text += "\n" + text
+					codeBuffer.Y = l.Y
+				} else {
+					// new code block
+					blocks = append(blocks, *codeBuffer)
+					codeBuffer = &Block{
+						Type: BlockCode,
+						Text: text,
+						Page: l.Page,
+						Y:    l.Y,
+					}
+				}
+			}
+
+			continue
+		}
+
+		// leaving code → flush it
+		if codeBuffer != nil {
+			blocks = append(blocks, *codeBuffer)
+			codeBuffer = nil
+		}
+
+		// skip headings
+		if l.FontSize > bodyFont {
+			continue
+		}
+
+		// 🟩 PARAGRAPH
+		if paragraphBuffer == nil {
+			paragraphBuffer = &Block{
+				Type: BlockParagraph,
+				Text: text,
+				Page: l.Page,
+				Y:    l.Y,
+			}
+			continue
+		}
+
+		samePage := l.Page == paragraphBuffer.Page
+		closeY := math.Abs(l.Y-paragraphBuffer.Y) < 20
+
+		if samePage && closeY {
+			paragraphBuffer.Text += " " + text
+			paragraphBuffer.Y = l.Y
+		} else {
+			// flush current paragraph and start new one
+			blocks = append(blocks, *paragraphBuffer)
+			paragraphBuffer = &Block{
+				Type: BlockParagraph,
+				Text: text,
+				Page: l.Page,
+				Y:    l.Y,
+			}
+		}
+	}
+
+	if paragraphBuffer != nil {
+		blocks = append(blocks, *paragraphBuffer)
+	}
+
+	if codeBuffer != nil {
+		blocks = append(blocks, *codeBuffer)
+	}
+
+	return blocks
+}
+
+// AttachBlocks takes a tree of headings and a list of blocks and
+// attaches each block to the nearest preceding heading based on page number
+// and Y coordinate. This function first flattens the tree of headings into a
+// list, sorts the headings by their position in the document, and then iterates
+// through the blocks to find the appropriate heading to attach each
+// block to. This allows us to build a more complete representation of the
+// document's structure, including both its hierarchy and content.
+func AttachBlocks(tree []*Node, blocks []Block) {
+	var flat []*Node
+
+	// 1. flatten
+	var walk func(nodes []*Node)
+	walk = func(nodes []*Node) {
+		for _, n := range nodes {
+			flat = append(flat, n)
+			walk(n.Children)
+		}
+	}
+	walk(tree)
+
+	// 2. sort headings (FIXED ORDER)
+	sort.Slice(flat, func(i, j int) bool {
+		if flat[i].Heading.Page == flat[j].Heading.Page {
+			return flat[i].Heading.Y < flat[j].Heading.Y
+		}
+		return flat[i].Heading.Page < flat[j].Heading.Page
+	})
+
+	// 3. attach blocks
+	for _, b := range blocks {
+		var target *Node
+
+		for i := range flat {
+			h := flat[i].Heading
+
+			if h.Page > b.Page {
+				break
+			}
+
+			if h.Page == b.Page && h.Y > b.Y {
+				break
+			}
+
+			target = flat[i]
+		}
+
+		if target != nil {
+			target.Blocks = append(target.Blocks, b)
+		}
+	}
+
+	// 4. attach captions to images
+	for _, node := range flat {
+		blocks := node.Blocks
+
+		for i := 0; i < len(blocks)-1; i++ {
+			current := &blocks[i]
+			next := &blocks[i+1]
+
+			if current.Type == BlockImage && next.Type == BlockParagraph {
+
+				text := strings.TrimSpace(next.Text)
+
+				if strings.HasPrefix(text, "Figure") {
+					clean := strings.TrimPrefix(text, "Figure")
+					clean = strings.TrimSpace(clean)
+
+					// remove "6." if present
+					if i := strings.Index(clean, "."); i != -1 {
+						clean = strings.TrimSpace(clean[i+1:])
+					}
+
+					current.Caption = clean
+
+					// remove caption paragraph (optional but recommended)
+					blocks = append(blocks[:i+1], blocks[i+2:]...)
+
+					i--
+				}
+			}
+		}
+
+		node.Blocks = blocks
+	}
+}
+
+// MergeLists takes a list of blocks and merges consecutive paragraph blocks
+// that look like list items into a single list block. This function iterates
+// through the blocks, identifies sequences of paragraph blocks that start with
+// common list item markers (e.g., bullets or numbers), and merges them into a
+// single block of type BlockList with an Items field containing the individual
+// list items. This helps to further refine the document's structure by
+// recognizing and grouping related content together.
+func MergeLists(blocks []Block) []Block {
+	var result []Block
+
+	for i := 0; i < len(blocks); i++ {
+
+		// only paragraphs can become list items
+		if blocks[i].Type == BlockParagraph && isListItem(blocks[i].Text) {
+
+			var items []string
+			startPage := blocks[i].Page
+			startY := blocks[i].Y
+
+			// collect consecutive list items
+			for i < len(blocks) &&
+				blocks[i].Type == BlockParagraph &&
+				isListItem(blocks[i].Text) {
+
+				items = append(items, cleanListItem(blocks[i].Text))
+				i++
+			}
+
+			// create list block
+			result = append(result, Block{
+				Type:  BlockList,
+				Items: items,
+				Page:  startPage,
+				Y:     startY,
+			})
+
+			i-- // adjust index after loop
+			continue
+		}
+
+		// normal block
+		result = append(result, blocks[i])
+	}
+
+	return result
+}
+
+func isTOCLine(text string) bool {
+	text = strings.TrimSpace(text)
+
+	// dotted leaders + page number
+	if strings.Contains(text, ". .") || strings.Contains(text, " . .") {
+		return true
+	}
+
+	// ends with number (page reference)
+	if regexp.MustCompile(`\s\d+$`).MatchString(text) {
+		return true
+	}
+
+	return false
+}
+
+func isCodeLine(l Line) bool {
+	font := strings.ToLower(l.FontName)
+
+	return strings.Contains(font, "mono") ||
+		strings.Contains(font, "courier") ||
+		strings.Contains(font, "code") ||
+		strings.Contains(font, "mn")
+}
+
+func isPageNumber(text string) bool {
+	text = strings.TrimSpace(text)
+
+	// pure number
+	if regexp.MustCompile(`^\d+$`).MatchString(text) {
+		return true
+	}
+
+	return false
+}
+
+func isImageLine(line Line) bool {
+	return len(line.Spans) == 1 && line.Spans[0].Type == "image"
+}
+
+func isListItem(text string) bool {
+	text = strings.TrimSpace(text)
+
+	// bullet list
+	if strings.HasPrefix(text, "•") {
+		return true
+	}
+
+	// numbered list (1. 2. 3.)
+	if regexp.MustCompile(`^\d+\.`).MatchString(text) {
+		return true
+	}
+
+	return false
+}
+
+func cleanListItem(text string) string {
+	text = strings.TrimSpace(text)
+
+	// remove bullet
+	if strings.HasPrefix(text, "•") {
+		return strings.TrimSpace(strings.TrimPrefix(text, "•"))
+	}
+
+	// remove "1. ", "2. "
+	re := regexp.MustCompile(`^\d+\.\s*`)
+	return re.ReplaceAllString(text, "")
+}

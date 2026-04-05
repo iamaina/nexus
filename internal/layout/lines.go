@@ -1,10 +1,3 @@
-// This file contains the logic for grouping spans into lines based on their Y
-// coordinates and page numbers. The GroupSpansIntoLines function takes a list
-// of spans and a Y tolerance value to determine which spans belong to the same
-// line. It sorts the spans by page, Y coordinate, and X coordinate, then
-// iterates through them to group them into lines. Each line is represented by a
-// Line struct that contains the combined text, font information, and other
-// features derived from the spans that belong to that line.
 package layout
 
 import (
@@ -12,6 +5,8 @@ import (
 	"sort"
 )
 
+// GroupSpansIntoLines groups spans into lines by page and Y proximity, then sorts
+// spans within each line by X position and derives text and font metadata.
 func GroupSpansIntoLines(spans []Span, yTolerance float64) []Line {
 	// Sort spans: page → y → x
 	sort.Slice(spans, func(i, j int) bool {
@@ -28,6 +23,15 @@ func GroupSpansIntoLines(spans []Span, yTolerance float64) []Line {
 
 	for _, span := range spans {
 		placed := false
+		// 🟨 IMAGE → becomes its own line
+		if span.Type == "image" {
+			lines = append(lines, Line{
+				Spans: []Span{span},
+				Y:     span.Y,
+				Page:  span.Page,
+			})
+			continue
+		}
 
 		for i := range lines {
 			line := &lines[i]

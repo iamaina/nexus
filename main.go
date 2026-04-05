@@ -15,26 +15,25 @@ import (
 )
 
 func main() {
-	services, err := app.New()
+	a, err := app.New()
 	if err != nil {
 		logger.Error(context.Background(), "App initialization failed", slog.Any("err", err))
 		os.Exit(1)
 	}
-	defer services.Close()
+	defer a.Close()
 
 	nexus.RootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Store in cmd context so subcommands can access it
-		cmd.SetContext(context.WithValue(cmd.Context(), app.ServicesKey, services))
+		cmd.SetContext(context.WithValue(cmd.Context(), app.AppKey, a))
 		return nil
 	}
 
-	// Graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		services.Close()
+		a.Close()
 		os.Exit(0)
 	}()
+
 	nexus.Execute()
 }
