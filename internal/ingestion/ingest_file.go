@@ -29,7 +29,7 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 		return false, fmt.Errorf("hash %s: %w", path, err)
 	}
 
-	// 2. Skip if already up to date (unless forced)
+	// 2. Skip if already up to date or duplicate (unless forced)
 	if !force {
 		upToDate, err := a.Documents.IsUpToDate(ctx, path, hash)
 		if err != nil {
@@ -42,6 +42,22 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 				slog.String("source", source),
 				slog.String("file_path", path),
 				slog.String("reason", "up_to_date"),
+			)
+			return false, nil
+		}
+
+		// Same content already ingested from a different path — warn and skip.
+		duplicate, err := a.Documents.FindDuplicate(ctx, path, hash)
+		if err != nil {
+			return false, fmt.Errorf("duplicate check: %w", err)
+		}
+		if duplicate != "" {
+			logger.Warn(ctx, "file.duplicate",
+				slog.String("component", "ingestion"),
+				slog.String("event", "file.duplicate"),
+				slog.String("source", source),
+				slog.String("file_path", path),
+				slog.String("already_ingested_at", duplicate),
 			)
 			return false, nil
 		}

@@ -9,6 +9,7 @@ type Document struct {
 	FileHash   string
 	CharCount  int
 	ChunkCount int
+	IngestTime string
 }
 
 // EnrichedChunk is a rendered chunk ready for storage — text, heading context, and level.

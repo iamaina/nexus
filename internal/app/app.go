@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iamaina/nexus/internal/classifier"
 	"github.com/iamaina/nexus/internal/config"
 	"github.com/iamaina/nexus/internal/embedder"
 	"github.com/iamaina/nexus/internal/logger"
@@ -30,6 +31,8 @@ type Application struct {
 	Chunks     *models.ChunkModel
 	Embedder   *embedder.OllamaEmbedder
 	Summarizer *summarizer.OllamaSummarizer
+	Classifier *classifier.Classifier
+	OllamaURL  string
 }
 
 // New loads config, connects to the database, runs migrations, and wires all dependencies.
@@ -75,11 +78,15 @@ func New() (*Application, error) {
 	}
 	embModel := config.C.Ollama.EmbeddingModel
 	if embModel == "" {
-		embModel = "nomic-embed-text"
+		embModel = "mxbai-embed-large"
 	}
 	genModel := config.C.Ollama.GenerationModel
 	if genModel == "" {
-		genModel = "llama3.2"
+		genModel = "llama3.1:8b"
+	}
+	classifyModel := config.C.Ollama.ClassificationModel
+	if classifyModel == "" {
+		classifyModel = "qwen2.5:7b"
 	}
 
 	if err := checkOllama(ctx, ollamaURL); err != nil {
@@ -96,6 +103,11 @@ func New() (*Application, error) {
 		return nil, err
 	}
 
+	clf, err := classifier.New(ollamaURL, classifyModel)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Application{
 		Config:     &config.C,
 		DB:         db,
@@ -103,6 +115,8 @@ func New() (*Application, error) {
 		Chunks:     &models.ChunkModel{DB: db},
 		Embedder:   emb,
 		Summarizer: sum,
+		Classifier: clf,
+		OllamaURL:  ollamaURL,
 	}, nil
 }
 
@@ -134,7 +148,7 @@ func migrate(ctx context.Context, db *pgx.Conn) error {
 			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE (document_id, chunk_index)
 		)`,
-		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedding vector(768)`,
+		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedding vector(1024)`,
 		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS section_level INTEGER NOT NULL DEFAULT 0`,
 	}
 

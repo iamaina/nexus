@@ -14,7 +14,7 @@ func ExtractPDF(path string) ([]byte, error) {
 		return nil, fmt.Errorf("python environment not set up — run: make setup-python")
 	}
 	cmd := exec.Command(".venv/bin/python", "scripts/extract_pdf.py", path) //nolint:gosec
-	return cmd.Output()
+	return cmd.CombinedOutput()
 }
 
 // extractPDFSpans calls ExtractPDF and unmarshals the result into []Span.
