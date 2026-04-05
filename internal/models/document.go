@@ -30,6 +30,49 @@ func (m *DocumentModel) IsUpToDate(ctx context.Context, filePath, currentHash st
 	return storedHash == currentHash, nil
 }
 
+// FindDuplicate returns the file_path of an already-ingested document with the
+// same hash but a different path. Empty string means no duplicate exists.
+func (m *DocumentModel) FindDuplicate(ctx context.Context, path, hash string) (string, error) {
+	var existing string
+	err := m.DB.QueryRow(ctx,
+		`SELECT file_path FROM documents WHERE file_hash = $1 AND file_path != $2 LIMIT 1`,
+		hash, path,
+	).Scan(&existing)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	return existing, err
+}
+
+// List returns all ingested documents, optionally filtered by source name.
+func (m *DocumentModel) List(ctx context.Context, source string) ([]Document, error) {
+	query := `SELECT id, source_name, file_path, chunk_count, char_count,
+	                 TO_CHAR(ingest_time, 'YYYY-MM-DD HH24:MI') AS ingest_time
+	          FROM documents`
+	args := []any{}
+	if source != "" {
+		query += ` WHERE source_name = $1`
+		args = append(args, source)
+	}
+	query += ` ORDER BY source_name, file_path`
+
+	rows, err := m.DB.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var docs []Document
+	for rows.Next() {
+		var d Document
+		if err := rows.Scan(&d.ID, &d.SourceName, &d.FilePath, &d.ChunkCount, &d.CharCount, &d.IngestTime); err != nil {
+			return nil, err
+		}
+		docs = append(docs, d)
+	}
+	return docs, rows.Err()
+}
+
 // Insert upserts document metadata and returns the document ID.
 func (m *DocumentModel) Insert(ctx context.Context, source, path, hash string, charCount, chunkCount int) (int64, error) {
 	var id int64

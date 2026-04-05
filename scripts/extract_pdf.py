@@ -11,8 +11,7 @@ def extract(path):
         blocks = page.get_text("dict")["blocks"]
 
         for b in blocks:
-<<<<<<< HEAD
-            # 🟦 IMAGE BLOCK
+            # IMAGE BLOCK
             if b["type"] == 1:
                 output.append({
                     "type": "image",
@@ -22,19 +21,14 @@ def extract(path):
                 })
                 continue
 
-            # 🟩 TEXT BLOCK
-=======
->>>>>>> master
+            # TEXT BLOCK
             if "lines" not in b:
                 continue
 
             for line in b["lines"]:
                 for span in line["spans"]:
                     output.append({
-<<<<<<< HEAD
-                        "type": "text",  # 🔥 ADD THIS
-=======
->>>>>>> master
+                        "type": "text",
                         "text": span["text"],
                         "x": span["bbox"][0],
                         "y": span["bbox"][1],

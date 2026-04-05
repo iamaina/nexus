@@ -136,13 +136,41 @@ setup:
 	@brew services restart postgresql@14
 	@sleep 3
 
+	# Reset document tables so migrations recreate them with correct vector dimensions.
+	# Safe on first run (DROP IF EXISTS is a no-op). Required on re-setup when the
+	# embedding model changes (vector dimension changes from 768 → 1024).
+	@echo "7. Resetting document tables (correct vector dimensions)..."
+	@USER=$$(whoami); \
+	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS chunks CASCADE;" 2>/dev/null || true; \
+	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS documents CASCADE;" 2>/dev/null || true; \
+	echo "   Tables will be recreated with vector(1024) on first run."
+
 	# Ollama models
-	@echo "7. Pulling Ollama models..."
-	@ollama pull nomic-embed-text
-	@read -p "Generation model [llama3.2]: " gen_model; \
-	[ -z "$$gen_model" ] && gen_model="llama3.2"; \
-	ollama pull $$gen_model; \
-	echo "$$gen_model" > .ollama_gen_model
+	@echo "8. Pulling Ollama models (this may take a while)..."
+	@echo "   Embedding model — mxbai-embed-large (multilingual, 1024 dims)..."
+	@ollama pull mxbai-embed-large
+	@echo "   Classification model — qwen2.5:7b (structured JSON output)..."
+	@ollama pull qwen2.5:7b
+	@echo "   Generation model — llama3.1:8b (query answers)..."
+	@ollama pull llama3.1:8b
+	@echo "llama3.1:8b" > .ollama_gen_model
+
+	# Personal docs directory
+	@echo "9. Creating PersonalDocs directory structure..."
+	@mkdir -p \
+		$$HOME/Documents/PersonalDocs/financial/banking \
+		$$HOME/Documents/PersonalDocs/financial/tax \
+		$$HOME/Documents/PersonalDocs/financial/mortgage \
+		$$HOME/Documents/PersonalDocs/insurance/health \
+		$$HOME/Documents/PersonalDocs/insurance/car \
+		$$HOME/Documents/PersonalDocs/insurance/home \
+		$$HOME/Documents/PersonalDocs/legal \
+		$$HOME/Documents/PersonalDocs/medical \
+		$$HOME/Documents/PersonalDocs/utilities \
+		$$HOME/Documents/PersonalDocs/correspondence \
+		$$HOME/Documents/PersonalDocs/books \
+		$$HOME/Documents/PersonalDocs/other
+	@echo "   ✅ ~/Documents/PersonalDocs/ ready"
 
 	# Interactive sources with defaults
 	@echo ""
@@ -194,21 +222,31 @@ setup:
 	@echo ""
 	@echo "postgres:" >> config.yaml
 	@echo '  dsn: "postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> config.yaml
-	@GEN_MODEL=$$(cat .ollama_gen_model 2>/dev/null || echo "llama3.2"); \
+	@GEN_MODEL=$$(cat .ollama_gen_model 2>/dev/null || echo "llama3.1:8b"); \
 	echo "ollama:" >> config.yaml; \
 	echo "  baseURL: http://localhost:11434" >> config.yaml; \
-	echo "  embeddingModel: nomic-embed-text" >> config.yaml; \
-	echo "  generationModel: $$GEN_MODEL" >> config.yaml
+	echo "  embeddingModel: mxbai-embed-large" >> config.yaml; \
+	echo "  generationModel: $$GEN_MODEL" >> config.yaml; \
+	echo "  classificationModel: qwen2.5:7b" >> config.yaml
+	@echo "personal:" >> config.yaml
+	@echo "  watchDirs:" >> config.yaml
+	@echo "    - ~/Downloads" >> config.yaml
+	@echo "    - ~/Desktop" >> config.yaml
+	@echo "  destDir: ~/Documents/PersonalDocs" >> config.yaml
 	@echo "relevanceThreshold: 0.70" >> config.yaml
 	@echo "logLevel: info" >> config.yaml
 	@rm -f .ollama_gen_model
 
 	@echo ""
 	@echo "✅ Setup complete!"
+	@echo ""
 	@echo "Next steps:"
-	@echo "   make ingest                                    # ingest your documents"
+	@echo "   make ingest                                       # ingest your documents"
 	@echo "   make query question=\"What is the staging area in Git?\""
-	@echo "   make query question=\"...\" model=llama3.1:8b   # use a different model"
+	@echo "   make query question=\"...\" model=llama3.1:8b      # use a different model"
+	@echo ""
+	@echo "Personal docs will be watched in ~/Downloads and ~/Desktop"
+	@echo "and organised into ~/Documents/PersonalDocs/ (nexus watch — coming soon)"
 
 lint:
 	mise run lint
@@ -268,9 +306,9 @@ cleanup:
 	@brew services stop ollama 2>/dev/null || true
 
 	@echo "Removing Ollama models..."
-	@ollama rm nomic-embed-text 2>/dev/null || true
-	@GEN_MODEL=$$(grep -A3 'ollama:' config.yaml 2>/dev/null | grep generationModel | awk '{print $$2}'); \
-	[ -n "$$GEN_MODEL" ] && ollama rm $$GEN_MODEL 2>/dev/null || true
+	@ollama rm mxbai-embed-large 2>/dev/null || true
+	@ollama rm qwen2.5:7b 2>/dev/null || true
+	@ollama rm llama3.1:8b 2>/dev/null || true
 
 	@echo "✅ Cleanup complete. You can now run 'make setup' for a fresh start."
 
