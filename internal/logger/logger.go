@@ -28,6 +28,10 @@ const (
 	ansiDim    = "\033[2m"
 )
 
+// Version is set at build time via -ldflags from cmd/nexus.Version.
+// It is exported so app.go can forward the value here during initialisation.
+var Version = "dev"
+
 // Init initializes the global logger. If stderr is a terminal, a coloured
 // text handler is used; otherwise a JSON handler is used (suitable for Loki).
 func Init(levelStr string) {
@@ -61,7 +65,7 @@ func Init(levelStr string) {
 		h := slog.NewJSONHandler(os.Stderr, opts)
 		Logger = slog.New(h).With(
 			slog.String("app", "nexus"),
-			slog.String("version", "0.2.0-dev"),
+			slog.String("version", Version),
 		)
 	}
 }

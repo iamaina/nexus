@@ -15,6 +15,9 @@ import (
 )
 
 func main() {
+	// Forward the build-time version into the logger so JSON logs carry the correct version.
+	logger.Version = nexus.Version
+
 	a, err := app.New()
 	if err != nil {
 		logger.Error(context.Background(), "App initialization failed", slog.Any("err", err))
