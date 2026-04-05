@@ -252,7 +252,7 @@ lint:
 	mise run lint
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -ldflags "-X github.com/iamaina/nexus/cmd/nexus.Version=$(VERSION)"
+LDFLAGS := -ldflags "-X github.com/iamaina/nexus/cmd/nexus.buildVersion=$(VERSION)"
 
 build:
 	go build $(LDFLAGS) -o nexus .
