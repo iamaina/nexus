@@ -11,11 +11,16 @@ import (
 
 var cfgFile, logLevel string
 
+// Version is set at build time via -ldflags "-X github.com/iamaina/nexus/cmd/nexus.Version=<tag>".
+// Falls back to "dev" when built with plain `go run` or `go build` without flags.
+var Version = "dev"
+
 // RootCmd is the root command for the nexus CLI.
 var RootCmd = &cobra.Command{
-	Use:   "nexus",
-	Short: "Ops Nexus local knowledge hub",
-	Long:  `CLI for ingesting and querying your personal knowledge vault locally.`,
+	Use:     "nexus",
+	Short:   "Ops Nexus local knowledge hub",
+	Long:    `CLI for ingesting and querying your personal knowledge vault locally.`,
+	Version: Version,
 }
 
 // Execute executes the root command, starting the CLI application.
