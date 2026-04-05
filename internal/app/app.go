@@ -150,6 +150,10 @@ func migrate(ctx context.Context, db *pgx.Conn) error {
 		)`,
 		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedding vector(1024)`,
 		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS section_level INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_type    TEXT`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS language    TEXT`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS institution TEXT`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_date    TEXT`,
 	}
 
 	for _, s := range stmts {
