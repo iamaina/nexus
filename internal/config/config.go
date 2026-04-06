@@ -2,17 +2,13 @@
 package config
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/iamaina/nexus/internal/logger"
-	"gopkg.in/yaml.v3"
 )
 
-// Source represents a configured source of documents to ingest, including its name, file path, and allowed extensions.
+// Source represents a configured source of documents to ingest.
 type Source struct {
 	Name       string   `yaml:"name"`
 	Path       string   `yaml:"path"`
@@ -25,7 +21,7 @@ type Personal struct {
 	DestDir   string   `yaml:"destDir"`
 }
 
-// Config represents the overall configuration for the nexus application, including document sources, database connection info, logging level, and relevance threshold.
+// Config is the fully resolved application configuration.
 type Config struct {
 	Sources  []Source `yaml:"sources"`
 	Personal Personal `yaml:"personal"`
@@ -42,63 +38,58 @@ type Config struct {
 	RelevanceThreshold float64 `yaml:"relevanceThreshold"`
 }
 
-// C is the global configuration instance loaded at application startup.
-var C Config
-
-// Load loads the configuration from the specified file path or the default location if none is provided, and unmarshals it into the global C variable.
-func Load(cfgPath string) error {
+// Load reads and parses the config file at cfgPath, expands ~ in paths,
+// resolves ${PG_PASSWORD}, and returns the config. cfgPath may be empty
+// (uses ~/ops-nexus/nexus/config.yaml).
+func Load(cfgPath string) (*Config, error) {
 	if cfgPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("resolve home dir: %w", err)
 		}
 		cfgPath = filepath.Join(home, "ops-nexus/nexus", "config.yaml")
 	}
 
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // Safe: cfgPath is always from our controlled config.yaml
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // cfgPath is always our controlled config.yaml
 	if err != nil {
-		return fmt.Errorf("cannot read config %s: %w", cfgPath, err)
+		return nil, fmt.Errorf("read config %s: %w", cfgPath, err)
 	}
 
-	if err := yaml.Unmarshal(data, &C); err != nil {
-		return fmt.Errorf("invalid yaml: %w", err)
+	// Use gopkg.in/yaml.v3 via an import alias to avoid a direct import at
+	// package level — keeps the config package dependency-light.
+	var cfg Config
+	if err := unmarshalYAML(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Expand ~ in paths
-	home, _ := os.UserHomeDir()
-	for i := range C.Sources {
-		p := &C.Sources[i].Path
-		if strings.HasPrefix(*p, "~/") {
-			*p = filepath.Join(home, (*p)[2:])
-		}
-	}
-	if strings.HasPrefix(C.Personal.DestDir, "~/") {
-		C.Personal.DestDir = filepath.Join(home, C.Personal.DestDir[2:])
-	}
-	for i, d := range C.Personal.WatchDirs {
-		if strings.HasPrefix(d, "~/") {
-			C.Personal.WatchDirs[i] = filepath.Join(home, d[2:])
-		}
+	if err := cfg.resolve(); err != nil {
+		return nil, err
 	}
 
-	if len(C.Sources) == 0 {
-		return fmt.Errorf("no sources defined in config.yaml")
-	}
-
-	return nil
+	return &cfg, nil
 }
 
-// ResolveSecrets replaces placeholders in the configuration with actual secret values from environment variables, such as the PostgreSQL password.
-func (c *Config) ResolveSecrets() error {
-	if c.Postgres.DSN == "" {
-		return nil // no postgres → skip
+// resolve expands ~ in path fields and substitutes ${PG_PASSWORD}.
+func (c *Config) resolve() error {
+	home, _ := os.UserHomeDir()
+
+	expandHome := func(p string) string {
+		if strings.HasPrefix(p, "~/") {
+			return filepath.Join(home, p[2:])
+		}
+		return p
+	}
+
+	for i := range c.Sources {
+		c.Sources[i].Path = expandHome(c.Sources[i].Path)
+	}
+	c.Personal.DestDir = expandHome(c.Personal.DestDir)
+	for i, d := range c.Personal.WatchDirs {
+		c.Personal.WatchDirs[i] = expandHome(d)
 	}
 
 	password := os.Getenv("PG_PASSWORD")
-	if strings.Contains(c.Postgres.DSN, "${PG_PASSWORD}") && password == "" {
-		logger.Warn(context.Background(), "PG_PASSWORD env var not set — DSN will use empty password (peer auth or .pgpass fallback)")
-	}
-
 	c.Postgres.DSN = strings.ReplaceAll(c.Postgres.DSN, "${PG_PASSWORD}", password)
+
 	return nil
 }

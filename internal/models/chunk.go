@@ -15,10 +15,15 @@ type ChunkModel struct {
 	DB *pgx.Conn
 }
 
-// Store inserts or updates the text chunks for a document.
+// Store inserts or updates the text chunks for a document in a single batch,
+// replacing N round-trips with one network call.
 func (m *ChunkModel) Store(ctx context.Context, docID int64, chunks []EnrichedChunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
 	for i, chunk := range chunks {
-		_, err := m.DB.Exec(ctx,
+		batch.Queue(
 			`INSERT INTO chunks (document_id, chunk_index, chunk_text, chapter, section_level)
 			 VALUES ($1, $2, $3, $4, $5)
 			 ON CONFLICT (document_id, chunk_index) DO UPDATE SET
@@ -27,12 +32,12 @@ func (m *ChunkModel) Store(ctx context.Context, docID int64, chunks []EnrichedCh
 			     section_level = EXCLUDED.section_level`,
 			docID, i, chunk.Text, chunk.Chapter, chunk.Level,
 		)
-		if err != nil {
-			logger.Error(ctx, "Chunk insert failed",
-				slog.Int64("doc_id", docID),
-				slog.Int("index", i),
-				slog.Any("err", err))
-			return err
+	}
+	br := m.DB.SendBatch(ctx, batch)
+	defer func() { _ = br.Close() }()
+	for i := range chunks {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("store chunk %d for doc %d: %w", i, docID, err)
 		}
 	}
 	logger.Debug(ctx, "Stored chunks",
@@ -41,21 +46,25 @@ func (m *ChunkModel) Store(ctx context.Context, docID int64, chunks []EnrichedCh
 	return nil
 }
 
-// StoreEmbeddings writes pre-computed embeddings to the chunks table for a given document.
-// The embeddings slice must be in the same order as the chunks were stored (chunk_index order).
+// StoreEmbeddings writes pre-computed embeddings to the chunks table in a single
+// batch. The embeddings slice must match chunk_index order.
 func (m *ChunkModel) StoreEmbeddings(ctx context.Context, docID int64, embeddings [][]float32) error {
+	if len(embeddings) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
 	for i, vec := range embeddings {
-		_, err := m.DB.Exec(ctx,
+		batch.Queue(
 			`UPDATE chunks SET embedding = $1::vector
 			 WHERE document_id = $2 AND chunk_index = $3`,
 			vectorToString(vec), docID, i,
 		)
-		if err != nil {
-			logger.Error(ctx, "Embedding store failed",
-				slog.Int64("doc_id", docID),
-				slog.Int("index", i),
-				slog.Any("err", err))
-			return err
+	}
+	br := m.DB.SendBatch(ctx, batch)
+	defer func() { _ = br.Close() }()
+	for i := range embeddings {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("store embedding %d for doc %d: %w", i, docID, err)
 		}
 	}
 	logger.Debug(ctx, "Stored embeddings",

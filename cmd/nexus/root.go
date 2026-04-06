@@ -6,11 +6,10 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/iamaina/nexus/internal/config"
 	"github.com/spf13/cobra"
 )
 
-var cfgFile, logLevel string
+var cfgFile string
 
 // buildVersion is the ldflags injection target — must stay a plain string literal.
 // Set by: go build -ldflags "-X github.com/iamaina/nexus/cmd/nexus.buildVersion=v1.2.3"
@@ -24,7 +23,6 @@ func resolveVersion() string {
 	if buildVersion != "" {
 		return buildVersion
 	}
-	// Fall back to the commit hash Go embeds automatically since 1.18.
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"
@@ -53,12 +51,12 @@ func resolveVersion() string {
 // RootCmd is the root command for the nexus CLI.
 var RootCmd = &cobra.Command{
 	Use:     "nexus",
-	Short:   "Ops Nexus local knowledge hub",
-	Long:    `CLI for ingesting and querying your personal knowledge vault locally.`,
+	Short:   "Ops Nexus — local personal intelligence layer",
+	Long:    `Local-first personal intelligence layer. No cloud, no subscriptions, no data leaving your machine.`,
 	Version: Version,
 }
 
-// Execute executes the root command, starting the CLI application.
+// Execute executes the root command.
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -67,16 +65,6 @@ func Execute() {
 }
 
 func init() {
-
-	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file ...")
-	RootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "log level...")
-	RootCmd.PersistentFlags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold for query results (overrides config value)")
-
-	// Load config early so log level is set for subcommands
-
-	if len(os.Args) > 1 {
-		_ = RootCmd.PersistentFlags().Parse(os.Args[1:])
-	}
-	config.C.RelevanceThreshold = queryThreshold
-	config.C.LogLevel = &logLevel
+	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/ops-nexus/nexus/config.yaml)")
+	RootCmd.PersistentFlags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold for query results (overrides config)")
 }

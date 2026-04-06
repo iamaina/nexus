@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -77,7 +78,10 @@ Press Ctrl+C to stop watching.`,
 		fmt.Printf("\n  Watching %d director(ies). Press Ctrl+C to stop.\n\n", watching)
 
 		// pending tracks settle timers per file path to debounce rapid WRITE events.
+		// mu guards pending — the map is written by the main loop and deleted by
+		// AfterFunc callbacks, which run in separate goroutines.
 		pending := make(map[string]*time.Timer)
+		var mu sync.Mutex
 
 		for {
 			select {
@@ -95,16 +99,20 @@ Press Ctrl+C to stop watching.`,
 
 				// Debounce: reset the timer on every write so we only process
 				// once the file has stopped changing.
+				mu.Lock()
 				if t, exists := pending[path]; exists {
 					t.Stop()
 				}
 				filePath := path // capture for closure
 				pending[filePath] = time.AfterFunc(settleDelay, func() {
+					mu.Lock()
 					delete(pending, filePath)
+					mu.Unlock()
 					// Each file gets its own background context so a slow
 					// classification doesn't block the watcher loop.
 					processWatchedFile(context.Background(), a, filePath)
 				})
+				mu.Unlock()
 
 			case watchErr, ok := <-watcher.Errors:
 				if !ok {
