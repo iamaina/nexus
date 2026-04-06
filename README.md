@@ -8,194 +8,52 @@ No cloud. No subscriptions. No data leaving your machine.
 
 ## What it does
 
-**Mode 1 — Personal Document Safe** ✅ Complete
+nexus runs three AI models entirely on your laptop. It reads your documents, understands their structure, and lets you query them in plain English. Drop a PDF, get a cited answer.
 
-Drop a PDF, Markdown, or text file anywhere. nexus classifies it, moves it to the right folder with a clean name, and ingests it for semantic search. Query in English, get answers with citations.
-
-```
-~/Downloads/invoice-04822.pdf
-  → nexus watch detects it
-  → qwen2.5:7b classifies: invoice/en, Canva, 2026-03
-  → moves to ~/Documents/PersonalDocs/finance/invoices/2026-03_Canva_Invoice.pdf
-  → ingests and embeds
-  → queryable: "What was the Canva invoice for?"
-```
-
-**Mode 2 — Work Intelligence** 🚧 Next
-
-Your running infrastructure alongside your technical books. Ask about *your* Terraform setup, *your* Kubernetes cluster — not generic docs.
-
-**Mode 3 — Teacher** 📋 Planned
-
-`nexus teach "Kubernetes networking"` — builds a course from your ingested material, teaches concept by concept, quizzes you, tracks progress.
+| Mode | Status | Description |
+|---|---|---|
+| **Personal Document Safe** | ✅ Complete | Auto-classify, auto-file, and query your documents |
+| **Work Intelligence** | 🚧 Active | Your running infrastructure + your technical books |
+| **Teacher** | 📋 Planned | Build a course from your own ingested material |
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-make setup     # one-time: DB, models, config, directories
-make ingest    # ingest configured source directories
-nexus watch    # watch ~/Downloads and ~/Desktop for new files (auto-filing)
+make setup     # one-time: database, AI models, config, directories
+make ingest    # index your knowledge base
+nexus watch    # auto-file new documents from ~/Downloads and ~/Desktop
+nexus query "What was the Canva invoice for?"
 ```
 
 ---
 
-## Installation
+## Documentation
 
-### 1. Bootstrap tools
-
-```bash
-make bootstrap
-```
-
-Installs Go, golangci-lint, and other tools via `mise`.
-
-### 2. First-time setup
-
-```bash
-make setup
-```
-
-This handles everything:
-- Creates PostgreSQL database and schema
-- Pulls three Ollama models: `mxbai-embed-large`, `qwen2.5:7b`, `llama3.1:8b`
-- Writes `config.yaml` from template
-- Creates `~/Documents/PersonalDocs/` directory tree
-
-### 3. Ingest your knowledge base
-
-```bash
-make ingest           # ingest all configured sources
-make ingest force=1   # force re-ingest (ignore dedup)
-```
-
-### 4. File personal documents
-
-```bash
-# Manual: classify, move, and ingest a single file
-nexus file ~/Downloads/some-document.pdf
-nexus file ~/Downloads/some-document.pdf --dry-run   # preview only
-
-# Automatic: watch directories for new files
-nexus watch
-```
-
-### 5. Query
-
-```bash
-nexus query "What is the staging area in Git?"
-nexus query "What was the Canva invoice for?" --source personal
-nexus query "..." --threshold 0.5    # lower threshold for short documents
-nexus query "..." --sources          # show retrieved chunks before answer
-```
+| Page | What it covers |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Prerequisites, setup, first query — includes explanations for newcomers to the stack |
+| [How It Works](docs/how-it-works.md) | The full pipeline, architecture decisions, and code organization |
+| [Commands](docs/commands.md) | Every command and flag with examples |
+| [Live Context](docs/live-context.md) | What `nexus context` is, why it exists, and SRE use cases |
+| [Configuration](docs/configuration.md) | Every config field explained |
+| [Contributing](CONTRIBUTING.md) | Branching model, commit rules, code quality checklist |
+| [Changelog](CHANGELOG.md) | What changed in each release |
 
 ---
 
-## Commands
+## How a query works
 
-### `nexus ingest`
-
-Batch-ingests all configured source directories.
-
-```bash
-nexus ingest
-nexus ingest --force    # re-ingest even if file hash unchanged
 ```
-
-### `nexus file <path>`
-
-Classifies a document, moves it to `PersonalDocs/<category>/`, and ingests it.
-
-```bash
-nexus file ~/Downloads/rabobank-statement.pdf
-nexus file ~/Downloads/rabobank-statement.pdf --dry-run
+Your question
+  → embed with mxbai-embed-large (1024-dim vector)
+  → cosine similarity search in pgvector (top 15 chunks)
+  → filter by relevance threshold (default 0.70)
+  → expand with structural children
+  → [if live sources registered] run kubectl / terraform / etc.
+  → llama3.1:8b generates a cited answer in English
 ```
-
-### `nexus watch`
-
-Watches `personal.watchDirs` (configured in `config.yaml`). When a `.pdf`, `.md`, or `.txt` file appears, automatically classifies, moves, and ingests it after a 3-second settle delay.
-
-```bash
-nexus watch
-```
-
-### `nexus query`
-
-Embeds your question, searches for relevant chunks, and generates a cited answer.
-
-```bash
-nexus query "How do I rebase interactively?"
-nexus query "What is a staging area?" --source books
-nexus query "What's in my ING statements?" --source personal --threshold 0.5
-nexus query "..." --model llama3.1:8b     # override generation model
-nexus query "..." --sources               # show source chunks before answer
-```
-
-### `nexus list`
-
-Lists all ingested documents, grouped by source.
-
-```bash
-nexus list
-nexus list --source personal
-```
-
-### `nexus chapters <book-name>`
-
-Lists the top-level chapters detected in an ingested document.
-
-```bash
-nexus chapters progit
-nexus chapters 2026-03_Canva_Invoice
-```
-
-### `nexus layout <file>`
-
-Debug tool for inspecting the layout pipeline. Useful when tuning heading detection or chunk quality.
-
-```bash
-nexus layout ~/Documents/progit.pdf
-nexus layout --fonts ~/Documents/progit.pdf
-nexus layout --headings ~/Documents/progit.pdf
-nexus layout --chunks --page-from 1 --page-to 20 ~/Documents/progit.pdf
-```
-
----
-
-## Configuration (`config.yaml`)
-
-Generated by `make setup`. Gitignored — stays on your machine.
-
-```yaml
-sources:
-  - name: books
-    path: ~/Documents/knowledge-drop
-    extensions: [.pdf, .md, .txt]
-  - name: intelligence
-    path: ~/ops-nexus/intelligence
-    extensions: [.pdf, .md, .txt]
-
-personal:
-  watchDirs:
-    - ~/Downloads
-    - ~/Desktop
-  destDir: ~/Documents/PersonalDocs
-
-postgres:
-  dsn: "postgres://vaultuser:${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"
-
-ollama:
-  baseURL: http://localhost:11434
-  embeddingModel: mxbai-embed-large
-  generationModel: llama3.1:8b
-  classificationModel: qwen2.5:7b
-
-relevanceThreshold: 0.70
-logLevel: info    # debug | info | warn | error
-```
-
-Set `NEXUS_LOG_LEVEL=debug` to override without editing the file.
 
 ---
 
@@ -205,37 +63,11 @@ Three local Ollama models, each chosen for its job:
 
 | Model | Job | Why |
 |---|---|---|
-| `mxbai-embed-large` | Embeddings | Multilingual — Dutch and English in the same vector space |
+| `mxbai-embed-large` | Embeddings | Multilingual — Dutch and English land in the same vector space |
 | `qwen2.5:7b` | Classification | Reliable structured JSON output |
 | `llama3.1:8b` | Query answers | Better reasoning for fluent, cited answers |
 
-All pulled automatically by `make setup`.
-
----
-
-## Project Structure
-
-```
-nexus/
-├── cmd/nexus/          One file per CLI command
-├── internal/
-│   ├── app/            Application struct — dependency wiring
-│   ├── classifier/     Document classification (qwen2.5:7b → JSON)
-│   ├── config/         YAML config loading
-│   ├── embedder/       Text embedding via mxbai-embed-large
-│   ├── ingestion/      Per-file ingestion pipeline + shared FileAndIngest
-│   ├── layout/         Structure-aware document parser (stable — do not modify lightly)
-│   ├── logger/         Coloured terminal / JSON structured logging
-│   ├── models/         DocumentModel, ChunkModel (pgx)
-│   └── summarizer/     Answer generation via llama3.1:8b
-├── scripts/
-│   └── extract_pdf.py  PyMuPDF span extractor
-├── main.go
-├── Makefile
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-└── config.yaml         (gitignored — created by make setup)
-```
+All pulled automatically by `make setup`. No API keys.
 
 ---
 
@@ -243,12 +75,11 @@ nexus/
 
 | Target | Description |
 |---|---|
-| `make setup` | Full first-time setup (DB + models + config + directories) |
+| `make setup` | Full first-time setup |
 | `make ingest` | Ingest all configured sources |
-| `make ingest force=1` | Force re-ingest everything |
+| `make ingest force=1` | Force re-ingest (ignore dedup) |
 | `make query question="..."` | Ask a question |
-| `make layout file=<path>` | Debug layout pipeline |
-| `make lint` | Run golangci-lint |
 | `make build` | Build binary (version from git tag) |
 | `make install` | Install to `~/.local/bin` |
+| `make lint` | Run golangci-lint |
 | `make cleanup` | Delete DB, config, and binary (fresh start) |
