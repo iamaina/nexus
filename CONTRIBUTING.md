@@ -88,49 +88,137 @@ The `internal/layout/` package is the most complex. It implements the full docum
 
 ---
 
-## Development Workflow
+## Branching Model (GitLab Flow)
 
-Every feature follows this cycle:
-
-### 1. Branch off `v0.1.x-dev`
-```bash
-git checkout v0.1.1-dev   # or current dev branch
+```
+master          ──●─────────────────────●──────────────────────●──
+                 v0.2.0                v0.3.0                 v0.4.0
+                    \                     \
+release/v0.3.0       ●──●──●──●──merge     \
+                                             release/v0.4.0    ●──●──...
 ```
 
-### 2. Build and verify
+### Rules
+
+- **`master`** — always stable. Only receives merges from a `release/vX.Y.Z` branch. Never commit directly. Every merge is tagged.
+- **`release/vX.Y.Z`** — the single working branch for all work toward the next release. Created from `master` at the start of each release cycle.
+- **One working branch at a time.** When `release/v0.3.0` merges to master, it is deleted and `release/v0.4.0` is created.
+- Short-lived `fix/name` or `feat/name` branches are optional for large isolated changes; otherwise commit directly to the release branch.
+
+### Release cycle
+
 ```bash
-go build ./...
-golangci-lint run ./...
-```
+# 1. All work happens on the current release branch
+git checkout release/v0.3.0
 
-### 3. Test manually
-Run the specific command affected. See `CLAUDE.md` section 16 for the current feature under development and its test commands.
+# 2. Commit (see Commit Messages below)
+git add <specific files>
+git commit -m "feat(watch): add inotify support for Linux"
+git push origin release/v0.3.0
 
-### 4. Commit
-```bash
-git add <specific files>    # never git add -A
-git commit -m "feat: description"
-git push origin v0.1.x-dev
-```
+# 3. When the milestone is complete and tested — update CHANGELOG.md
+git add CHANGELOG.md
+git commit -m "chore: release v0.3.0"
 
-Commit message prefixes:
-- `feat:` — new feature
-- `fix:` — bug fix
-- `refactor:` — code restructuring, no behaviour change
-- `chore:` — tooling, config, CI
-
-### 5. Merge to master only when tested
-```bash
+# 4. Merge to master (no-ff preserves the branch topology)
 git checkout master
-git merge v0.1.x-dev --no-ff -m "Merge: feature description"
+git merge release/v0.3.0 --no-ff -m "Release v0.3.0"
 git push origin master
-git checkout v0.1.x-dev
+
+# 5. Tag on master
+git tag -a v0.3.0 -m "v0.3.0 — Mode 2: Work Intelligence"
+git push origin v0.3.0
+
+# 6. Clean up and open next cycle
+git branch -d release/v0.3.0
+git push origin --delete release/v0.3.0
+git checkout -b release/v0.4.0
+git push origin release/v0.4.0
 ```
 
-**Rule:** master is always working and tested. No partial features on master.
+### Tracking progress during development
 
-### 6. Tag releases
-See [Versioning](#versioning) below.
+`git describe --tags` automatically shows `v0.2.0-N-gSHA` on the working branch — N commits since the last release tag. `make build` injects this into the binary. No extra tagging needed during development.
+
+---
+
+## Commit Messages (Conventional Commits)
+
+Format:
+```
+<type>(<scope>): <subject>        ← max 72 chars, lowercase, no period at end
+
+<body>                            ← explain WHY, not WHAT. Wrap at 72 chars.
+                                    Leave blank if subject is self-explanatory.
+
+<footer>                          ← BREAKING CHANGE:, issue refs, Co-Authored-By:
+```
+
+### Types
+
+| Type | When | Version impact |
+|---|---|---|
+| `feat` | new user-facing feature | minor bump (0.2→0.3) |
+| `fix` | bug fix | patch bump (0.2.0→0.2.1) |
+| `perf` | performance improvement, no API change | patch bump |
+| `refactor` | restructuring, no behaviour change | none |
+| `docs` | README, CHANGELOG, CONTRIBUTING only | none |
+| `chore` | deps, Makefile, build tooling, CI | none |
+| `test` | adding or fixing tests | none |
+| `feat!` or `BREAKING CHANGE:` | breaking API change | major bump |
+
+### Scope (optional)
+
+Use the package or command name: `feat(watch):`, `fix(classifier):`, `perf(models):`, `chore(deps):`
+
+### Examples
+
+```
+feat(watch): add 3-second settle delay before processing new files
+fix(classifier): strip "Unknown" string from LLM institution field
+perf(models): replace N+1 db inserts with pgx.Batch
+refactor(config): Load() returns *Config instead of mutating global
+docs: rewrite README to reflect v0.2.0 commands and model setup
+chore(deps): upgrade fsnotify to v1.9.0
+```
+
+### Rules
+
+- Subject: imperative mood ("add" not "added"), lowercase, no period
+- Body: blank line after subject; explain the *why* (the what is in the diff)
+- `git add <specific files>` — never `git add -A` or `git add .`
+- Commit one logical change per commit — don't bundle unrelated fixes
+
+---
+
+## Versioning
+
+nexus follows [Semantic Versioning](https://semver.org/):
+
+```
+vMAJOR.MINOR.PATCH
+   │     │     └── bug fixes, no new features
+   │     └──────── new features, backwards compatible
+   └────────────── breaking changes or major mode completions
+```
+
+### Version milestones
+
+| Version | Milestone |
+|---|---|
+| v0.1.x | Core RAG pipeline (stable) |
+| v0.2.x | Mode 1 — Personal Document Safe ✅ |
+| v0.3.x | Mode 2 — Work Intelligence |
+| v0.4.x | Mode 3 — Teacher |
+| v1.0.0 | All three modes stable, tests, production-ready |
+
+### Tag rules
+
+- **Always annotated**: `git tag -a v1.2.3 -m "v1.2.3 — one-line summary"`
+- **Format**: `vMAJOR.MINOR.PATCH` — strictly semver, always `v`-prefixed
+- **Never move or delete a published tag** — cut a new patch instead
+- **Tag only on `master`** — never tag on a release branch
+- Pre-release suffixes (`-rc.1`, `-beta.1`) are for public release candidates; not used for day-to-day dev work
 
 ---
 
