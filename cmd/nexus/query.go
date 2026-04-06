@@ -143,11 +143,30 @@ var queryCmd = &cobra.Command{
 
 		if len(results) == 0 {
 			fmt.Println("No sufficiently relevant information found.")
-			fmt.Printf("(%d candidates retrieved, none passed threshold %.2f or minimum length)\n", len(candidates), threshold)
+			if len(candidates) > 0 {
+				best := candidates[0]
+				fmt.Printf("(best match scored %.2f — threshold is %.2f; try --threshold %.2f to include it)\n",
+					best.Score, threshold, best.Score-0.01)
+			} else {
+				fmt.Println("(no candidates retrieved — is the source ingested?)")
+			}
 			return
 		}
 
-		// --sources: show retrieved chunks before the answer
+		// Always show file paths so the user knows where answers came from.
+		// --sources additionally shows the chunk preview.
+		for _, r := range results {
+			if r.Score > 0 {
+				file := strings.TrimSuffix(filepath.Base(r.File), filepath.Ext(r.File))
+				fmt.Printf("  📄 %s", file)
+				if r.Chapter != "" {
+					fmt.Printf(" — %s", r.Chapter)
+				}
+				fmt.Println()
+			}
+		}
+		fmt.Println()
+
 		if showSources {
 			fmt.Printf("--- Sources (%d) ---\n", len(results))
 			for i, r := range results {
