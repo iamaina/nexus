@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/iamaina/nexus/internal/app"
-	"github.com/iamaina/nexus/internal/classifier"
 	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/logger"
-	"github.com/iamaina/nexus/internal/models"
 	"github.com/spf13/cobra"
 )
 
@@ -40,129 +37,61 @@ Examples:
 			logger.Error(ctx, fmt.Sprintf("Cannot resolve path: %v", err))
 			return
 		}
-
 		if _, err := os.Stat(srcPath); err != nil {
 			logger.Error(ctx, fmt.Sprintf("File not found: %s", srcPath))
 			return
 		}
 
-		destDir := a.Config.Personal.DestDir
-		if destDir == "" {
-			destDir = filepath.Join(os.Getenv("HOME"), "Documents", "PersonalDocs")
-		}
-
-		// 1. Classify
-		fmt.Printf("  Classifying %s ...\n", filepath.Base(srcPath))
-		cl, err := a.Classifier.Classify(ctx, srcPath)
-		if err != nil {
-			logger.Error(ctx, fmt.Sprintf("Classification failed: %v — filing to 'other'", err))
-			cl = fallbackClassification(srcPath)
-		}
-
-		// 2. Build destination path
-		ext := strings.ToLower(filepath.Ext(srcPath))
-		filename := cl.Filename
-		if filename == "" {
-			filename = strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
-		}
-		destSubDir := filepath.Join(destDir, cl.DestDir)
-		destPath := filepath.Join(destSubDir, filename+ext)
-
-		// Print classification result
-		fmt.Printf("\n  Classification\n")
-		fmt.Printf("  ├─ Type:        %s\n", cl.DocType)
-		fmt.Printf("  ├─ Language:    %s\n", cl.Language)
-		if cl.Institution != "" {
-			fmt.Printf("  ├─ Institution: %s\n", cl.Institution)
-		}
-		if cl.Date != "" {
-			fmt.Printf("  ├─ Date:        %s\n", cl.Date)
-		}
-		fmt.Printf("  ├─ Destination: %s\n", destPath)
-		fmt.Printf("  └─ Filename:    %s%s\n\n", filename, ext)
-
+		// Dry-run: classify only, no move or ingest.
 		if fileDryRun {
+			fmt.Printf("  Classifying %s ...\n", filepath.Base(srcPath))
+			cl, err := a.Classifier.Classify(ctx, srcPath)
+			if err != nil {
+				logger.Error(ctx, fmt.Sprintf("Classification failed: %v", err))
+				return
+			}
+			destBase := a.Config.Personal.DestDir
+			if destBase == "" {
+				destBase = filepath.Join(os.Getenv("HOME"), "Documents", "PersonalDocs")
+			}
+			ext := filepath.Ext(srcPath)
+			destPath := filepath.Join(destBase, cl.DestDir, cl.Filename+ext)
+			printClassification(cl.DocType, cl.Language, cl.Institution, cl.Date, destPath, cl.Filename+ext)
 			fmt.Println("  [dry-run] No files were moved or ingested.")
 			return
 		}
 
-		// 3. Create destination directory
-		if err := os.MkdirAll(destSubDir, 0o750); err != nil {
-			logger.Error(ctx, fmt.Sprintf("Cannot create directory %s: %v", destSubDir, err))
-			return
-		}
-
-		// 4. Move file (rename is atomic on same filesystem; falls back to copy+delete across filesystems)
-		if err := moveFile(srcPath, destPath); err != nil {
-			logger.Error(ctx, fmt.Sprintf("Cannot move file: %v", err))
-			return
-		}
-		fmt.Printf("  Moved → %s\n", destPath)
-
-		// 5. Ingest — pass classification metadata so it's stored in the documents table
-		fmt.Printf("  Ingesting ...\n")
-		meta := &models.DocMeta{
-			DocType:     cl.DocType,
-			Language:    cl.Language,
-			Institution: cl.Institution,
-			DocDate:     cl.Date,
-		}
-		ingested, err := ingestion.IngestFile(ctx, a, destPath, "personal", false, meta)
+		// Real run: classify → move → ingest.
+		fmt.Printf("  Classifying %s ...\n", filepath.Base(srcPath))
+		result, err := ingestion.FileAndIngest(ctx, a, srcPath)
 		if err != nil {
-			logger.Error(ctx, fmt.Sprintf("Ingest failed: %v", err))
+			logger.Error(ctx, fmt.Sprintf("Filing failed: %v", err))
 			return
 		}
-		if ingested {
-			fmt.Printf("  Done. File is filed and searchable.\n")
+
+		cl := result.Classification
+		printClassification(cl.DocType, cl.Language, cl.Institution, cl.Date, result.DestPath, filepath.Base(result.DestPath))
+		fmt.Printf("  Moved → %s\n", result.DestPath)
+		if result.Ingested {
+			fmt.Println("  Done. File is filed and searchable.")
 		} else {
-			fmt.Printf("  Done. File already ingested (content unchanged).\n")
+			fmt.Println("  Done. File already ingested (content unchanged).")
 		}
 	},
 }
 
-// fallbackClassification returns a safe default when the LLM fails.
-func fallbackClassification(path string) *classifier.Classification {
-	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return &classifier.Classification{
-		DocType:  "other",
-		Language: "unknown",
-		Filename: base,
-		DestDir:  "other",
+func printClassification(docType, language, institution, date, destPath, filename string) {
+	fmt.Printf("\n  Classification\n")
+	fmt.Printf("  ├─ Type:        %s\n", docType)
+	fmt.Printf("  ├─ Language:    %s\n", language)
+	if institution != "" {
+		fmt.Printf("  ├─ Institution: %s\n", institution)
 	}
-}
-
-// moveFile moves src to dst, falling back to copy+delete if os.Rename fails
-// (e.g. across filesystem boundaries such as /tmp → ~/Documents).
-func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil { //nolint:gosec // src is resolved via filepath.Abs, dst is constructed from config + LLM filename that has been sanitised
-		return nil
+	if date != "" {
+		fmt.Printf("  ├─ Date:        %s\n", date)
 	}
-	// Cross-filesystem: copy then delete.
-	in, err := os.Open(src) //nolint:gosec
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640) //nolint:gosec
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-
-	buf := make([]byte, 32*1024)
-	for {
-		n, readErr := in.Read(buf)
-		if n > 0 {
-			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-				return writeErr
-			}
-		}
-		if readErr != nil {
-			break
-		}
-	}
-	return os.Remove(src)
+	fmt.Printf("  ├─ Destination: %s\n", destPath)
+	fmt.Printf("  └─ Filename:    %s\n\n", filename)
 }
 
 func init() {
