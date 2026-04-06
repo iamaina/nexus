@@ -7,13 +7,39 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased] — v0.1.1-dev
+## [Unreleased]
 
 ### In Progress
-- `nexus watch` — filesystem watcher (fsnotify) for automatic filing
-- DB columns for personal document metadata (`doc_type`, `language`, `institution`, `doc_date`)
-- Summarizer prompt update: always answer in English regardless of document language
-- File path always shown in query results (not gated behind `--sources`)
+- Summarizer prompt: always answer in English regardless of document language
+- `nexus watch` as a background service / launchd agent
+
+---
+
+## [v0.2.0] — 2026-04-06
+
+Mode 1 (Personal Document Safe) complete.
+
+### Added
+- **`nexus watch`** — filesystem daemon (fsnotify) watching `personal.watchDirs`
+  - 3-second settle delay debounces rapid writes (large files copying from browser/phone)
+  - One bad file never kills the watcher — errors logged and processing continues
+- **`nexus file --dry-run`** — show classification without moving or ingesting
+- **`ingestion.FileAndIngest`** — shared classify→move→ingest pipeline used by both commands
+- **Document metadata columns** — `doc_type`, `language`, `institution`, `doc_date` stored on ingest
+  - `nexus file` passes classification result; `nexus ingest` passes nil (no classification)
+  - `COALESCE` on upsert: re-ingesting without classification preserves existing metadata
+- **Version from git tag** — `make build` injects `git describe --tags` via `-ldflags`
+  - `go build` without flags falls back to VCS commit hash; `go run` shows `dev`
+- **CONTRIBUTING.md** — setup, workflow, versioning, code standards, architecture decisions
+- **CHANGELOG.md** — Keep a Changelog format
+
+### Changed
+- File path always shown above query answers (previously required `--sources` flag)
+- When no results pass the threshold, best score shown with suggested `--threshold` value
+- `--source` flag matches against both `source_name` and `file_path` (partial, case-insensitive)
+
+### Fixed
+- Version hardcoded as `"0.2.0-dev"` in logger — now reads from build-time injection
 
 ---
 
@@ -86,6 +112,7 @@ First stable release. Local RAG pipeline running entirely on your machine.
 
 ---
 
-[Unreleased]: https://github.com/iamaina/nexus/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/iamaina/nexus/compare/v0.2.0...HEAD
+[v0.2.0]: https://github.com/iamaina/nexus/compare/v0.1.1...v0.2.0
 [v0.1.1]: https://github.com/iamaina/nexus/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/iamaina/nexus/releases/tag/v0.1.0
