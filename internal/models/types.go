@@ -44,3 +44,13 @@ type Result struct {
 	Text       string
 	Score      float64
 }
+
+// ContextSource is a registered live context source — a shell command whose
+// output is injected into the query prompt at query time.
+type ContextSource struct {
+	ID          int64
+	Name        string
+	Command     string
+	Description string
+	CreatedAt   string
+}

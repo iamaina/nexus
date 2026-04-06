@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/live"
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/iamaina/nexus/internal/models"
 	"github.com/spf13/cobra"
@@ -19,6 +20,7 @@ var (
 	querySource    string
 	queryModel     string
 	showSources    bool
+	noLive         bool
 )
 
 var queryCmd = &cobra.Command{
@@ -139,9 +141,39 @@ var queryCmd = &cobra.Command{
 			slog.Int64("duration_ms", time.Since(t).Milliseconds()),
 		)
 
+		// Fetch and run live context sources (skip if --no-live or none registered).
+		var liveOutputs []live.Output
+		if !noLive {
+			liveSources, liveErr := a.ContextSources.List(ctx)
+			if liveErr != nil {
+				logger.Warn(ctx, "Failed to list context sources", slog.Any("err", liveErr))
+			} else if len(liveSources) > 0 {
+				logger.Debug(ctx, "query.live_start",
+					slog.String("component", "query"),
+					slog.Int("sources", len(liveSources)),
+				)
+				liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
+				var liveOK int
+				for _, o := range liveOutputs {
+					if o.Err == nil {
+						liveOK++
+					} else {
+						logger.Warn(ctx, "Live source failed",
+							slog.String("name", o.Name),
+							slog.Any("err", o.Err))
+					}
+				}
+				logger.Debug(ctx, "query.live_done",
+					slog.String("component", "query"),
+					slog.Int("ok", liveOK),
+					slog.Int("failed", len(liveOutputs)-liveOK),
+				)
+			}
+		}
+
 		fmt.Printf("\n🔍 Query: %s\n\n", question)
 
-		if len(results) == 0 {
+		if len(results) == 0 && len(liveOutputs) == 0 {
 			fmt.Println("No sufficiently relevant information found.")
 			if len(candidates) > 0 {
 				best := candidates[0]
@@ -151,6 +183,13 @@ var queryCmd = &cobra.Command{
 				fmt.Println("(no candidates retrieved — is the source ingested?)")
 			}
 			return
+		}
+
+		// Show live source names when they contributed output.
+		for _, o := range liveOutputs {
+			if o.Err == nil && o.Text != "" {
+				fmt.Printf("  ⚡ %s\n", o.Name)
+			}
 		}
 
 		// Always show file paths so the user knows where answers came from.
@@ -186,7 +225,7 @@ var queryCmd = &cobra.Command{
 
 		// Generate answer
 		t = time.Now()
-		answer, err := sum.Summarize(ctx, question, results)
+		answer, err := sum.SummarizeWithLive(ctx, question, results, liveOutputs)
 		if err != nil {
 			logger.Error(ctx, "query.summarize_failed",
 				slog.String("component", "query"),
@@ -213,5 +252,6 @@ func init() {
 	queryCmd.Flags().StringVar(&querySource, "source", "", "restrict search to a source or filename (e.g. progit)")
 	queryCmd.Flags().StringVar(&queryModel, "model", "", "generation model to use (overrides config, e.g. llama3.1:8b)")
 	queryCmd.Flags().BoolVar(&showSources, "sources", false, "show retrieved source chunks before the answer")
+	queryCmd.Flags().BoolVar(&noLive, "no-live", false, "skip running registered live context sources")
 	RootCmd.AddCommand(queryCmd)
 }

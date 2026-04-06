@@ -39,14 +39,15 @@ type DocumentClassifier interface {
 // Summarizer is kept as a concrete type because its WithModel method returns
 // *OllamaSummarizer; abstracting it would require a circular import.
 type Application struct {
-	Config     *config.Config
-	DB         *pgx.Conn
-	Documents  *models.DocumentModel
-	Chunks     *models.ChunkModel
-	Embedder   Embedder
-	Summarizer *summarizer.OllamaSummarizer
-	Classifier DocumentClassifier
-	OllamaURL  string
+	Config         *config.Config
+	DB             *pgx.Conn
+	Documents      *models.DocumentModel
+	Chunks         *models.ChunkModel
+	ContextSources *models.ContextModel
+	Embedder       Embedder
+	Summarizer     *summarizer.OllamaSummarizer
+	Classifier     DocumentClassifier
+	OllamaURL      string
 }
 
 // New loads config, connects to the database, runs migrations, and wires all dependencies.
@@ -119,14 +120,15 @@ func New() (*Application, error) {
 	}
 
 	return &Application{
-		Config:     cfg,
-		DB:         db,
-		Documents:  &models.DocumentModel{DB: db},
-		Chunks:     &models.ChunkModel{DB: db},
-		Embedder:   emb,
-		Summarizer: sum,
-		Classifier: clf,
-		OllamaURL:  ollamaURL,
+		Config:         cfg,
+		DB:             db,
+		Documents:      &models.DocumentModel{DB: db},
+		Chunks:         &models.ChunkModel{DB: db},
+		ContextSources: &models.ContextModel{DB: db},
+		Embedder:       emb,
+		Summarizer:     sum,
+		Classifier:     clf,
+		OllamaURL:      ollamaURL,
 	}, nil
 }
 
@@ -168,6 +170,13 @@ func migrate(ctx context.Context, db *pgx.Conn) error {
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS language       TEXT`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS institution    TEXT`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_date       TEXT`,
+		`CREATE TABLE IF NOT EXISTS context_sources (
+			id          BIGSERIAL PRIMARY KEY,
+			name        TEXT UNIQUE NOT NULL,
+			command     TEXT NOT NULL,
+			description TEXT,
+			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, s := range stmts {
