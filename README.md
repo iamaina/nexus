@@ -1,30 +1,43 @@
 # nexus
 
-**Your personal local knowledge vault** — fully offline RAG for PDFs, Markdown, and text.
+**Local-first personal intelligence layer** — fully offline document filing, search, and Q&A.
 
-Built for engineers who want complete control: no cloud, no subscriptions, no data leaving your machine.
+No cloud. No subscriptions. No data leaving your machine.
+
+---
+
+## What it does
+
+**Mode 1 — Personal Document Safe** ✅ Complete
+
+Drop a PDF, Markdown, or text file anywhere. nexus classifies it, moves it to the right folder with a clean name, and ingests it for semantic search. Query in English, get answers with citations.
+
+```
+~/Downloads/invoice-04822.pdf
+  → nexus watch detects it
+  → qwen2.5:7b classifies: invoice/en, Canva, 2026-03
+  → moves to ~/Documents/PersonalDocs/finance/invoices/2026-03_Canva_Invoice.pdf
+  → ingests and embeds
+  → queryable: "What was the Canva invoice for?"
+```
+
+**Mode 2 — Work Intelligence** 🚧 Next
+
+Your running infrastructure alongside your technical books. Ask about *your* Terraform setup, *your* Kubernetes cluster — not generic docs.
+
+**Mode 3 — Teacher** 📋 Planned
+
+`nexus teach "Kubernetes networking"` — builds a course from your ingested material, teaches concept by concept, quizzes you, tracks progress.
+
+---
 
 ## Quick Start
 
 ```bash
-make setup
-make ingest
-make query question="What is the staging area in Git?"
+make setup     # one-time: DB, models, config, directories
+make ingest    # ingest configured source directories
+nexus watch    # watch ~/Downloads and ~/Desktop for new files (auto-filing)
 ```
-
----
-
-## Features
-
-- Structure-aware PDF ingestion — reconstructs heading hierarchy, paragraphs, code blocks, lists, and images
-- Automatic deduplication by content hash (SHA-256)
-- Batched local embeddings via `nomic-embed-text` (Ollama)
-- Semantic search with pgvector cosine similarity
-- Summarized answers via `llama3.2` (Ollama)
-- Chapter/section listing from ingested documents
-- Layout debug command for inspecting the full pipeline
-- Coloured terminal logs; JSON logs when piped (Loki/Grafana compatible)
-- Fully offline — nothing leaves your machine
 
 ---
 
@@ -44,25 +57,37 @@ Installs Go, golangci-lint, and other tools via `mise`.
 make setup
 ```
 
-This will:
+This handles everything:
+- Creates PostgreSQL database and schema
+- Pulls three Ollama models: `mxbai-embed-large`, `qwen2.5:7b`, `llama3.1:8b`
+- Writes `config.yaml` from template
+- Creates `~/Documents/PersonalDocs/` directory tree
 
-- Create a Python venv and install PyMuPDF (PDF extraction)
-- Start PostgreSQL and create the `opsnexus` database and `vaultuser` role
-- Install the `pgvector` extension
-- Pull Ollama models (`nomic-embed-text`, `llama3.2`)
-- Ask for your document folders and write `config.yaml`
-
-### 3. Ingest documents
+### 3. Ingest your knowledge base
 
 ```bash
-make ingest          # ingest all sources from config.yaml
-make ingest force=1  # force re-ingest (ignore dedup)
+make ingest           # ingest all configured sources
+make ingest force=1   # force re-ingest (ignore dedup)
 ```
 
-### 4. Query your knowledge
+### 4. File personal documents
 
 ```bash
-make query question="What is the staging area in Git?"
+# Manual: classify, move, and ingest a single file
+nexus file ~/Downloads/some-document.pdf
+nexus file ~/Downloads/some-document.pdf --dry-run   # preview only
+
+# Automatic: watch directories for new files
+nexus watch
+```
+
+### 5. Query
+
+```bash
+nexus query "What is the staging area in Git?"
+nexus query "What was the Canva invoice for?" --source personal
+nexus query "..." --threshold 0.5    # lower threshold for short documents
+nexus query "..." --sources          # show retrieved chunks before answer
 ```
 
 ---
@@ -71,48 +96,120 @@ make query question="What is the staging area in Git?"
 
 ### `nexus ingest`
 
-Walks all configured source directories and ingests any new or changed files.
+Batch-ingests all configured source directories.
 
 ```bash
 nexus ingest
-nexus ingest --force    # re-ingest everything
+nexus ingest --force    # re-ingest even if file hash unchanged
+```
+
+### `nexus file <path>`
+
+Classifies a document, moves it to `PersonalDocs/<category>/`, and ingests it.
+
+```bash
+nexus file ~/Downloads/rabobank-statement.pdf
+nexus file ~/Downloads/rabobank-statement.pdf --dry-run
+```
+
+### `nexus watch`
+
+Watches `personal.watchDirs` (configured in `config.yaml`). When a `.pdf`, `.md`, or `.txt` file appears, automatically classifies, moves, and ingests it after a 3-second settle delay.
+
+```bash
+nexus watch
 ```
 
 ### `nexus query`
 
-Embeds your question, searches for relevant chunks, and generates an answer.
+Embeds your question, searches for relevant chunks, and generates a cited answer.
 
 ```bash
 nexus query "How do I rebase interactively?"
-nexus query --threshold 0.7 "What is a detached HEAD?"
+nexus query "What is a staging area?" --source books
+nexus query "What's in my ING statements?" --source personal --threshold 0.5
+nexus query "..." --model llama3.1:8b     # override generation model
+nexus query "..." --sources               # show source chunks before answer
 ```
 
-### `nexus chapters`
+### `nexus list`
+
+Lists all ingested documents, grouped by source.
+
+```bash
+nexus list
+nexus list --source personal
+```
+
+### `nexus chapters <book-name>`
 
 Lists the top-level chapters detected in an ingested document.
 
 ```bash
-nexus chapters ~/Documents/knowledge-drop/progit.pdf
+nexus chapters progit
+nexus chapters 2026-03_Canva_Invoice
 ```
 
-### `nexus layout`
+### `nexus layout <file>`
 
-Debug tool for inspecting the layout pipeline on any PDF. Useful when tuning heading detection or chunk quality.
+Debug tool for inspecting the layout pipeline. Useful when tuning heading detection or chunk quality.
 
 ```bash
-nexus layout <pdf>                                         # pipeline summary
-nexus layout --fonts <pdf>                                 # font distribution + heading size candidates
-nexus layout --headings <pdf>                              # all detected headings (level, font, page)
-nexus layout --tree <pdf>                                  # heading tree structure
-nexus layout --blocks <pdf>                                # all blocks with type and content preview
-nexus layout --sections <pdf>                              # full section hierarchy
-nexus layout --chunks <pdf>                                # final chunks
-nexus layout --chunks --page-from 1 --page-to 20 <pdf>    # page-filtered
-
-# via Makefile
-make layout file=~/Documents/progit.pdf
-make layout file=~/Documents/progit.pdf flags="--chunks --page-from 1 --page-to 10"
+nexus layout ~/Documents/progit.pdf
+nexus layout --fonts ~/Documents/progit.pdf
+nexus layout --headings ~/Documents/progit.pdf
+nexus layout --chunks --page-from 1 --page-to 20 ~/Documents/progit.pdf
 ```
+
+---
+
+## Configuration (`config.yaml`)
+
+Generated by `make setup`. Gitignored — stays on your machine.
+
+```yaml
+sources:
+  - name: books
+    path: ~/Documents/knowledge-drop
+    extensions: [.pdf, .md, .txt]
+  - name: intelligence
+    path: ~/ops-nexus/intelligence
+    extensions: [.pdf, .md, .txt]
+
+personal:
+  watchDirs:
+    - ~/Downloads
+    - ~/Desktop
+  destDir: ~/Documents/PersonalDocs
+
+postgres:
+  dsn: "postgres://vaultuser:${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"
+
+ollama:
+  baseURL: http://localhost:11434
+  embeddingModel: mxbai-embed-large
+  generationModel: llama3.1:8b
+  classificationModel: qwen2.5:7b
+
+relevanceThreshold: 0.70
+logLevel: info    # debug | info | warn | error
+```
+
+Set `NEXUS_LOG_LEVEL=debug` to override without editing the file.
+
+---
+
+## Models
+
+Three local Ollama models, each chosen for its job:
+
+| Model | Job | Why |
+|---|---|---|
+| `mxbai-embed-large` | Embeddings | Multilingual — Dutch and English in the same vector space |
+| `qwen2.5:7b` | Classification | Reliable structured JSON output |
+| `llama3.1:8b` | Query answers | Better reasoning for fluent, cited answers |
+
+All pulled automatically by `make setup`.
 
 ---
 
@@ -120,68 +217,38 @@ make layout file=~/Documents/progit.pdf flags="--chunks --page-from 1 --page-to 
 
 ```
 nexus/
-├── cmd/nexus/
-│   ├── root.go          CLI entry, context wiring
-│   ├── ingest.go        nexus ingest
-│   ├── query.go         nexus query
-│   ├── chapters.go      nexus chapters
-│   └── layout.go        nexus layout (pipeline debugger)
+├── cmd/nexus/          One file per CLI command
 ├── internal/
-│   ├── app/             Application struct, DB init, auto-migrations
-│   ├── config/          YAML config loader, env overrides
-│   ├── embedder/        Batched Ollama embedding
-│   ├── ingestion/       Per-file ingestion pipeline
-│   ├── layout/          PDF layout engine (stable)
-│   ├── logger/          Coloured terminal + JSON structured logging
-│   ├── models/          DocumentModel, ChunkModel (pgx)
-│   └── summarizer/      Ollama generation
+│   ├── app/            Application struct — dependency wiring
+│   ├── classifier/     Document classification (qwen2.5:7b → JSON)
+│   ├── config/         YAML config loading
+│   ├── embedder/       Text embedding via mxbai-embed-large
+│   ├── ingestion/      Per-file ingestion pipeline + shared FileAndIngest
+│   ├── layout/         Structure-aware document parser (stable — do not modify lightly)
+│   ├── logger/         Coloured terminal / JSON structured logging
+│   ├── models/         DocumentModel, ChunkModel (pgx)
+│   └── summarizer/     Answer generation via llama3.1:8b
 ├── scripts/
-│   └── extract_pdf.py   PyMuPDF span extractor
+│   └── extract_pdf.py  PyMuPDF span extractor
 ├── main.go
 ├── Makefile
-└── config.yaml          (gitignored)
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+└── config.yaml         (gitignored — created by make setup)
 ```
 
 ---
 
-## Configuration (`config.yaml`)
+## Make targets
 
-Generated by `make setup`. Example:
-
-```yaml
-sources:
-  - name: books
-    path: ~/Documents/knowledge-drop
-    extensions:
-      - .pdf
-      - .md
-      - .txt
-  - name: intelligence
-    path: ~/ops-nexus/intelligence
-    extensions:
-      - .pdf
-
-postgres:
-  dsn: "postgres://vaultuser:${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"
-
-relevanceThreshold: 0.65
-logLevel: info          # debug | info | warn | error
-```
-
-Set `NEXUS_LOG_LEVEL=debug` to override without editing the file.
-
----
-
-## Common Commands
-
-| Command | Description |
-|---------|-------------|
-| `make setup` | Full first-time setup |
+| Target | Description |
+|---|---|
+| `make setup` | Full first-time setup (DB + models + config + directories) |
 | `make ingest` | Ingest all configured sources |
 | `make ingest force=1` | Force re-ingest everything |
 | `make query question="..."` | Ask a question |
-| `make layout file=<pdf>` | Debug pipeline for a PDF |
+| `make layout file=<path>` | Debug layout pipeline |
 | `make lint` | Run golangci-lint |
-| `make build` | Build binary to `./nexus` |
+| `make build` | Build binary (version from git tag) |
 | `make install` | Install to `~/.local/bin` |
-| `make cleanup` | Delete DB, config, and binary |
+| `make cleanup` | Delete DB, config, and binary (fresh start) |
