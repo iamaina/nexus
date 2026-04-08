@@ -43,9 +43,25 @@ If your change spans multiple types, pick the **highest impact** type. A PR that
 
 ---
 
+## Branch workflow
+
+Work happens on the current `stable/vX.Y.Z` branch, which CI creates automatically after each release tag. For isolated features:
+
+```bash
+git checkout stable/v0.4.0
+git checkout -b feat/my-feature
+# ... commits ...
+git push origin feat/my-feature
+# open PR into stable/v0.4.0
+```
+
+When the milestone is complete, the stable branch is squashed and merged to master.
+
+---
+
 ## Before opening a PR: squash your commits
 
-Your working branch will accumulate many commits as you iterate (`wip`, `fix typo`, `try again`, etc.). Before opening a PR, squash them all into **one well-formed conventional commit**.
+Your working branch will accumulate many commits as you iterate (`wip`, `fix typo`, `try again`, etc.). Before opening a PR **into master**, squash them all into **one well-formed conventional commit**.
 
 ### Step-by-step
 
