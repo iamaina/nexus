@@ -1,0 +1,71 @@
+name: Auto-tag on merge to master
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get commit message
+        id: commit
+        run: echo "message=$(git log -1 --format=%s)" >> $GITHUB_OUTPUT
+
+      - name: Get current version tag
+        id: current
+        run: |
+          latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "tag=$latest" >> $GITHUB_OUTPUT
+          echo "Current version: $latest"
+
+      - name: Determine next version
+        id: next
+        run: |
+          current="${{ steps.current.outputs.tag }}"
+          message="${{ steps.commit.outputs.message }}"
+          version=${current#v}
+          IFS='.' read -r major minor patch <<< "$version"
+
+          if echo "$message" | grep -qiE "^(breaking|major)(\(.+\))?[!:]"; then
+            next="v$((major+1)).0.0"
+            bump="major"
+          elif echo "$message" | grep -qE "^feat(\(.+\))?[!:]"; then
+            next="v${major}.$((minor+1)).0"
+            bump="minor"
+          elif echo "$message" | grep -qE "^(fix|perf|refactor|docs|chore|test)(\(.+\))?[!:]"; then
+            next="v${major}.${minor}.$((patch+1))"
+            bump="patch"
+          else
+            echo "::error::Commit message does not follow the Conventional Commits format."
+            echo "::error::Message received: \"$message\""
+            echo "::error::Expected format: type(scope): subject"
+            echo "::error::Valid types: breaking, feat, fix, perf, refactor, docs, chore, test"
+            echo "::error::See the commit conventions guide: https://github.com/iamaina/nexus/blob/master/docs/commit-conventions.md"
+            echo ""
+            echo "If you have multiple commits, squash them first:"
+            echo "  git rebase -i master"
+            exit 1
+          fi
+
+          echo "tag=$next" >> $GITHUB_OUTPUT
+          echo "bump=$bump" >> $GITHUB_OUTPUT
+          echo "Next version: $next ($bump bump)"
+
+      - name: Create and push tag
+        if: steps.next.outputs.tag != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.next.outputs.tag }}" \
+            -m "${{ steps.next.outputs.tag }} — ${{ steps.commit.outputs.message }}"
+          git push origin "${{ steps.next.outputs.tag }}"
+          echo "✅ Tagged ${{ steps.next.outputs.tag }}"

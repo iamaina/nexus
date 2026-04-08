@@ -94,47 +94,55 @@ The `internal/layout/` package is the most complex. It implements the full docum
 master          ──●─────────────────────●──────────────────────●──
                  v0.2.0                v0.3.0                 v0.4.0
                     \                     \
-release/v0.3.0       ●──●──●──●──merge     \
-                                             release/v0.4.0    ●──●──...
+stable/v0.3.0        ●──●──●──●──merge     \
+                                             stable/v0.4.0    ●──●──...
 ```
 
 ### Rules
 
-- **`master`** — always stable. Only receives merges from a `release/vX.Y.Z` branch. Never commit directly. Every merge is tagged.
-- **`release/vX.Y.Z`** — the single working branch for all work toward the next release. Created from `master` at the start of each release cycle.
-- **One working branch at a time.** When `release/v0.3.0` merges to master, it is deleted and `release/v0.4.0` is created.
-- Short-lived `fix/name` or `feat/name` branches are optional for large isolated changes; otherwise commit directly to the release branch.
+- **`master`** — always stable. Only receives merges from a `stable/vX.Y.Z` branch. Never commit directly. Every merge is tagged automatically.
+- **`stable/vX.Y.Z`** — the single working branch for all work toward the next release. Created automatically by CI after each tag is pushed. Devs branch off this and open PRs back into it.
+- **One working branch at a time.** When `stable/v0.3.0` merges to master and the `v0.3.0` tag is pushed, CI creates `stable/v0.4.0` automatically.
+- Short-lived `fix/name` or `feat/name` branches are for isolated changes; open a PR into the current `stable/vX.Y.Z` branch.
 
 ### Release cycle
 
 ```bash
-# 1. All work happens on the current release branch
-git checkout release/v0.3.0
+# 1. All work happens on the current stable branch (created automatically by CI)
+git checkout stable/v0.4.0
 
-# 2. Commit (see Commit Messages below)
+# 2. For isolated changes, create a short-lived branch and open a PR
+git checkout -b feat/my-feature
 git add <specific files>
-git commit -m "feat(watch): add inotify support for Linux"
-git push origin release/v0.3.0
+git commit -m "feat(scope): short description"
+git push origin feat/my-feature
+# → open PR into stable/v0.4.0
 
-# 3. When the milestone is complete and tested — update CHANGELOG.md
-git add CHANGELOG.md
-git commit -m "chore: release v0.3.0"
+# 3. When the milestone is complete and tested:
+#    Squash all commits in the stable branch into one conventional commit
+git rebase -i master
+# → set all but the first to 's', write one clean conventional commit message
 
-# 4. Merge to master (no-ff preserves the branch topology)
-git checkout master
-git merge release/v0.3.0 --no-ff -m "Release v0.3.0"
-git push origin master
+# 4. Force-push the squashed branch
+git push --force origin stable/v0.4.0
 
-# 5. Tag on master
-git tag -a v0.3.0 -m "v0.3.0 — Mode 2: Work Intelligence"
-git push origin v0.3.0
+# 5. Open a PR into master
+#    The PR title must match your squashed commit message (CI enforces this)
 
-# 6. Clean up and open next cycle
-git branch -d release/v0.3.0
-git push origin --delete release/v0.3.0
-git checkout -b release/v0.4.0
-git push origin release/v0.4.0
+# 6. On merge — CI automatically:
+#    a) Creates a version tag based on commit type:
+#       feat:     → minor bump  (v0.3.0 → v0.4.0)
+#       fix:      → patch bump  (v0.4.0 → v0.4.1)
+#       breaking: → major bump  (v0.4.0 → v1.0.0)
+#    b) Creates the next stable branch (e.g. stable/v0.5.0) from master
+#    c) Protects the new branch (require PR, CI must pass)
+
+# 7. Switch to the new branch — no manual cleanup needed
+git checkout master && git pull
+git checkout stable/v0.5.0
 ```
+
+> **Full squash guide:** [docs/commit-conventions.md](docs/commit-conventions.md)
 
 ### Tracking progress during development
 
@@ -158,14 +166,16 @@ Format:
 
 | Type | When | Version impact |
 |---|---|---|
-| `feat` | new user-facing feature | minor bump (0.2→0.3) |
-| `fix` | bug fix | patch bump (0.2.0→0.2.1) |
-| `perf` | performance improvement, no API change | patch bump |
-| `refactor` | restructuring, no behaviour change | none |
-| `docs` | README, CHANGELOG, CONTRIBUTING only | none |
-| `chore` | deps, Makefile, build tooling, CI | none |
-| `test` | adding or fixing tests | none |
-| `feat!` or `BREAKING CHANGE:` | breaking API change | major bump |
+| `breaking` / `major` | incompatible change — removed flag, destructive schema change, config format change | major bump (`v0.3.0` → `v1.0.0`) |
+| `feat` | new user-facing feature | minor bump (`v0.2.0` → `v0.3.0`) |
+| `fix` | bug fix | patch bump (`v0.3.0` → `v0.3.1`) |
+| `perf` | performance improvement, no behaviour change | patch bump |
+| `refactor` | restructuring, no behaviour change | patch bump |
+| `docs` | documentation only | patch bump |
+| `chore` | deps, Makefile, build tooling, CI | patch bump |
+| `test` | adding or fixing tests | patch bump |
+
+> The CI pipeline enforces this. A non-conforming commit message **fails the build** and blocks the merge. See [docs/commit-conventions.md](docs/commit-conventions.md) for the full guide including how to squash commits.
 
 ### Scope (optional)
 
@@ -220,18 +230,6 @@ vMAJOR.MINOR.PATCH
 - **Tag only on `master`** — never tag on a release branch
 - Pre-release suffixes (`-rc.1`, `-beta.1`) are for public release candidates; not used for day-to-day dev work
 
----
-
-## Versioning
-
-nexus follows [Semantic Versioning](https://semver.org/):
-
-```
-MAJOR.MINOR.PATCH
-  │     │     └── bug fixes, no new features
-  │     └──────── new features, backwards compatible
-  └────────────── breaking changes or major mode completions
-```
 
 ### Version milestones
 
