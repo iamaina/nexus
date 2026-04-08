@@ -12,16 +12,24 @@ type ContextModel struct {
 	DB *pgx.Conn
 }
 
-// Add inserts a new context source. Returns an error if the name already exists.
-func (m *ContextModel) Add(ctx context.Context, name, command, description string) error {
-	_, err := m.DB.Exec(ctx,
-		`INSERT INTO context_sources (name, command, description) VALUES ($1, $2, $3)`,
+// Add upserts a context source by name. If the name already exists the command
+// and description are updated in-place, making repeated calls idempotent.
+// Returns true if the source was newly created, false if it was updated.
+func (m *ContextModel) Add(ctx context.Context, name, command, description string) (created bool, err error) {
+	var id int64
+	err = m.DB.QueryRow(ctx,
+		`INSERT INTO context_sources (name, command, description)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (name) DO UPDATE
+		     SET command     = EXCLUDED.command,
+		         description = EXCLUDED.description
+		 RETURNING (xmax = 0) AS inserted, id`,
 		name, command, description,
-	)
+	).Scan(&created, &id)
 	if err != nil {
-		return fmt.Errorf("add context source %q: %w", name, err)
+		return false, fmt.Errorf("add context source %q: %w", name, err)
 	}
-	return nil
+	return created, nil
 }
 
 // List returns all registered context sources ordered by name.
