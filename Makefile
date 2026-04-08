@@ -1,14 +1,16 @@
-.PHONY: help bootstrap setup setup-python lint build install ingest query layout dev cleanup all
+.PHONY: help bootstrap setup setup-python reset-db lint build install ingest query layout dev cleanup all
 
 help:
 	@echo "nexus Makefile"
 	@echo ""
 	@echo "  make bootstrap                     → Install development tools (mise)"
-	@echo "  make setup                         → Interactive first-time setup (DB + config + models)"
+	@echo "  make setup                         → First-time setup (idempotent — safe to re-run)"
+	@echo "  make setup reconfigure=1           → Re-run setup and overwrite config.yaml"
+	@echo "  make reset-db                      → DROP all tables and re-run migrations (loses all ingested data)"
 	@echo "  make lint                          → Run golangci-lint"
 	@echo "  make build                         → Build binary to ./nexus"
 	@echo "  make install                       → Install binary to ~/.local/bin"
-	@echo "  make ingest                        → Ingest documents from configured sources"
+	@echo "  make ingest                        → Ingest documents (skips unchanged files)"
 	@echo "  make ingest force=1                → Force re-ingest (ignore dedup)"
 	@echo "  make query question=\"...\"                      → Ask a question against the knowledge base"
 	@echo "  make query question=\"...\" source=progit         → Restrict to one source"
@@ -29,8 +31,20 @@ setup-python:
 	@.venv/bin/pip install pymupdf
 	@echo "✅ Python environment ready for PDF extraction"
 
+reset-db:
+	@echo "=== nexus reset-db — WARNING: this deletes all ingested data ==="
+	@read -p "Are you sure? This drops chunks, documents, and context_sources. (Y/N): " confirm; \
+	if [ "$$confirm" != "Y" ] && [ "$$confirm" != "y" ]; then \
+		echo "Cancelled."; exit 1; \
+	fi
+	@USER=$$(whoami); \
+	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS chunks CASCADE;" 2>/dev/null || true; \
+	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS documents CASCADE;" 2>/dev/null || true; \
+	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS context_sources CASCADE;" 2>/dev/null || true
+	@echo "✅ Tables dropped. Run 'make ingest' after nexus restarts to re-populate."
+
 setup:
-	@echo "=== nexus first-time setup ==="
+	@echo "=== nexus setup (idempotent) ==="
 
 	# Step 0: 1Password (optional but preferred)
 	@if command -v op >/dev/null 2>&1; then \
@@ -136,17 +150,8 @@ setup:
 	@brew services restart postgresql@14
 	@sleep 3
 
-	# Reset document tables so migrations recreate them with correct vector dimensions.
-	# Safe on first run (DROP IF EXISTS is a no-op). Required on re-setup when the
-	# embedding model changes (vector dimension changes from 768 → 1024).
-	@echo "7. Resetting document tables (correct vector dimensions)..."
-	@USER=$$(whoami); \
-	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS chunks CASCADE;" 2>/dev/null || true; \
-	psql -U $$USER -h localhost -d opsnexus -c "DROP TABLE IF EXISTS documents CASCADE;" 2>/dev/null || true; \
-	echo "   Tables will be recreated with vector(1024) on first run."
-
-	# Ollama models
-	@echo "8. Pulling Ollama models (this may take a while)..."
+	# Ollama models (ollama pull is idempotent — skips if already downloaded)
+	@echo "7. Pulling Ollama models (skipped if already present)..."
 	@echo "   Embedding model — mxbai-embed-large (multilingual, 1024 dims)..."
 	@ollama pull mxbai-embed-large
 	@echo "   Classification model — qwen2.5:7b (structured JSON output)..."
@@ -155,8 +160,8 @@ setup:
 	@ollama pull llama3.1:8b
 	@echo "llama3.1:8b" > .ollama_gen_model
 
-	# Personal docs directory
-	@echo "9. Creating PersonalDocs directory structure..."
+	# Personal docs directory (mkdir -p is idempotent)
+	@echo "8. Creating PersonalDocs directory structure..."
 	@mkdir -p \
 		$$HOME/Documents/PersonalDocs/financial/banking \
 		$$HOME/Documents/PersonalDocs/financial/tax \
@@ -172,81 +177,69 @@ setup:
 		$$HOME/Documents/PersonalDocs/other
 	@echo "   ✅ ~/Documents/PersonalDocs/ ready"
 
-	# Interactive sources with defaults
+	# Config — skip if already exists unless reconfigure=1
 	@echo ""
-	@echo "=== Add your knowledge sources ==="
-	@echo "Press Enter to accept defaults or enter custom paths."
-	@echo ""
-
-	@rm -f config.yaml 2>/dev/null || true
-	@echo "sources:" > config.yaml
-
-#  we should replace the Default 1 and Default 2 with the loop below, for now we
-#  can just do 2 defaults to make it easier to test.
-#
-#  @i=1; \
-# 	while true; do \
-# 		read -p "Path $$i: " path; \
-# 		if [ -z "$$path" ]; then break; fi; \
-# 		read -p "Name (default: source$$i): " name; \
-# 		[ -z "$$name" ] && name="source$$i"; \
-# 		echo "  - name: $$name" >> config.yaml; \
-# 		echo "    path: $$path" >> config.yaml; \
-# 		echo "    extensions:" >> config.yaml; \
-# 		echo "      - .pdf" >> config.yaml; \
-# 		echo "      - .md" >> config.yaml; \
-# 		echo "      - .txt" >> config.yaml; \
-# 		i=$$((i+1)); \
-# 	done
-
-	# Default 1: books
-	read -p "Books folder [~/Documents/knowledge-drop]: " books_path; \
-	[ -z "$$books_path" ] && books_path="$$HOME/Documents/knowledge-drop"; \
-	echo "  - name: books" >> config.yaml; \
-	echo "    path: $$books_path" >> config.yaml; \
-	echo "    extensions:" >> config.yaml; \
-	echo "      - .pdf" >> config.yaml; \
-	echo "      - .md" >> config.yaml; \
-	echo "      - .txt" >> config.yaml
-
-	# Default 2: intelligence
-	read -p "Intelligence folder [~/ops-nexus/intelligence]: " intel_path; \
-	[ -z "$$intel_path" ] && intel_path="$$HOME/ops-nexus/intelligence"; \
-	echo "  - name: intelligence" >> config.yaml; \
-	echo "    path: $$intel_path" >> config.yaml; \
-	echo "    extensions:" >> config.yaml; \
-	echo "      - .pdf" >> config.yaml; \
-	echo "      - .md" >> config.yaml; \
-	echo "      - .txt" >> config.yaml
-
-	@echo ""
-	@echo "postgres:" >> config.yaml
-	@echo '  dsn: "postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> config.yaml
-	@GEN_MODEL=$$(cat .ollama_gen_model 2>/dev/null || echo "llama3.1:8b"); \
-	echo "ollama:" >> config.yaml; \
-	echo "  baseURL: http://localhost:11434" >> config.yaml; \
-	echo "  embeddingModel: mxbai-embed-large" >> config.yaml; \
-	echo "  generationModel: $$GEN_MODEL" >> config.yaml; \
-	echo "  classificationModel: qwen2.5:7b" >> config.yaml
-	@echo "personal:" >> config.yaml
-	@echo "  watchDirs:" >> config.yaml
-	@echo "    - ~/Downloads" >> config.yaml
-	@echo "    - ~/Desktop" >> config.yaml
-	@echo "  destDir: ~/Documents/PersonalDocs" >> config.yaml
-	@echo "relevanceThreshold: 0.70" >> config.yaml
-	@echo "logLevel: info" >> config.yaml
-	@rm -f .ollama_gen_model
+	@if [ -f config.yaml ] && [ "$(reconfigure)" != "1" ]; then \
+		echo "✅ config.yaml already exists — skipping (run 'make setup reconfigure=1' to overwrite)."; \
+	else \
+		echo "=== Configure knowledge sources ==="; \
+		echo "Press Enter to accept defaults or enter custom paths."; \
+		echo ""; \
+		rm -f config.yaml 2>/dev/null || true; \
+		echo "sources:" > config.yaml; \
+		read -p "Books folder [~/Documents/knowledge-drop]: " books_path; \
+		[ -z "$$books_path" ] && books_path="$$HOME/Documents/knowledge-drop"; \
+		echo "  - name: books" >> config.yaml; \
+		echo "    path: $$books_path" >> config.yaml; \
+		echo "    extensions:" >> config.yaml; \
+		echo "      - .pdf" >> config.yaml; \
+		echo "      - .md" >> config.yaml; \
+		echo "      - .txt" >> config.yaml; \
+		read -p "Intelligence folder [~/ops-nexus/intelligence]: " intel_path; \
+		[ -z "$$intel_path" ] && intel_path="$$HOME/ops-nexus/intelligence"; \
+		echo "  - name: intelligence" >> config.yaml; \
+		echo "    path: $$intel_path" >> config.yaml; \
+		echo "    extensions:" >> config.yaml; \
+		echo "      - .pdf" >> config.yaml; \
+		echo "      - .md" >> config.yaml; \
+		echo "      - .txt" >> config.yaml; \
+		read -p "Active ops / notes folder [~/ops-nexus/active-ops]: " ops_path; \
+		[ -z "$$ops_path" ] && ops_path="$$HOME/ops-nexus/active-ops"; \
+		echo "  - name: ops-notes" >> config.yaml; \
+		echo "    path: $$ops_path" >> config.yaml; \
+		echo "    extensions:" >> config.yaml; \
+		echo "      - .md" >> config.yaml; \
+		echo "      - .txt" >> config.yaml; \
+		echo "" >> config.yaml; \
+		echo "postgres:" >> config.yaml; \
+		echo '  dsn: "postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> config.yaml; \
+		GEN_MODEL=$$(cat .ollama_gen_model 2>/dev/null || echo "llama3.1:8b"); \
+		echo "ollama:" >> config.yaml; \
+		echo "  baseURL: http://localhost:11434" >> config.yaml; \
+		echo "  embeddingModel: mxbai-embed-large" >> config.yaml; \
+		echo "  generationModel: $$GEN_MODEL" >> config.yaml; \
+		echo "  classificationModel: qwen2.5:7b" >> config.yaml; \
+		echo "personal:" >> config.yaml; \
+		echo "  watchDirs:" >> config.yaml; \
+		echo "    - ~/Downloads" >> config.yaml; \
+		echo "    - ~/Desktop" >> config.yaml; \
+		echo "  destDir: ~/Documents/PersonalDocs" >> config.yaml; \
+		echo "relevanceThreshold: 0.70" >> config.yaml; \
+		echo "logLevel: info" >> config.yaml; \
+		rm -f .ollama_gen_model; \
+		echo "✅ config.yaml written."; \
+	fi
 
 	@echo ""
 	@echo "✅ Setup complete!"
 	@echo ""
 	@echo "Next steps:"
-	@echo "   make ingest                                       # ingest your documents"
+	@echo "   make ingest                                         # ingest your documents (skips unchanged files)"
 	@echo "   make query question=\"What is the staging area in Git?\""
-	@echo "   make query question=\"...\" model=llama3.1:8b      # use a different model"
+	@echo "   make query question=\"...\" model=llama3.1:8b        # use a different model"
+	@echo "   nexus watch                                         # auto-file new documents from ~/Downloads"
 	@echo ""
-	@echo "Personal docs will be watched in ~/Downloads and ~/Desktop"
-	@echo "and organised into ~/Documents/PersonalDocs/ (nexus watch — coming soon)"
+	@echo "To reset ingested data (e.g. after changing embedding model): make reset-db"
 
 lint:
 	mise run lint

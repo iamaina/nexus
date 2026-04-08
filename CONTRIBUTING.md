@@ -88,7 +88,7 @@ The `internal/layout/` package is the most complex. It implements the full docum
 
 ---
 
-## Branching Model (GitLab Flow)
+## Branching Model
 
 ```
 master          ──●─────────────────────●──────────────────────●──
