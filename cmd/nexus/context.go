@@ -39,11 +39,16 @@ var contextAddCmd = &cobra.Command{
 			return
 		}
 		name, command := args[0], args[1]
-		if err := a.ContextSources.Add(ctx, name, command, contextDescription); err != nil {
+		created, err := a.ContextSources.Add(ctx, name, command, contextDescription)
+		if err != nil {
 			logger.Error(ctx, fmt.Sprintf("context add failed: %v", err))
 			return
 		}
-		fmt.Printf("  ✓ Registered %q\n    $ %s\n", name, command)
+		verb := "Updated"
+		if created {
+			verb = "Registered"
+		}
+		fmt.Printf("  ✓ %s %q\n    $ %s\n", verb, name, command)
 		if contextDescription != "" {
 			fmt.Printf("    %s\n", contextDescription)
 		}
