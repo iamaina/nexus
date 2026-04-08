@@ -94,50 +94,52 @@ The `internal/layout/` package is the most complex. It implements the full docum
 master          ──●─────────────────────●──────────────────────●──
                  v0.2.0                v0.3.0                 v0.4.0
                     \                     \
-release/v0.3.0       ●──●──●──●──merge     \
-                                             release/v0.4.0    ●──●──...
+stable/v0.3.0        ●──●──●──●──merge     \
+                                             stable/v0.4.0    ●──●──...
 ```
 
 ### Rules
 
-- **`master`** — always stable. Only receives merges from a `release/vX.Y.Z` branch. Never commit directly. Every merge is tagged.
-- **`release/vX.Y.Z`** — the single working branch for all work toward the next release. Created from `master` at the start of each release cycle.
-- **One working branch at a time.** When `release/v0.3.0` merges to master, it is deleted and `release/v0.4.0` is created.
-- Short-lived `fix/name` or `feat/name` branches are optional for large isolated changes; otherwise commit directly to the release branch.
+- **`master`** — always stable. Only receives merges from a `stable/vX.Y.Z` branch. Never commit directly. Every merge is tagged automatically.
+- **`stable/vX.Y.Z`** — the single working branch for all work toward the next release. Created automatically by CI after each tag is pushed. Devs branch off this and open PRs back into it.
+- **One working branch at a time.** When `stable/v0.3.0` merges to master and the `v0.3.0` tag is pushed, CI creates `stable/v0.4.0` automatically.
+- Short-lived `fix/name` or `feat/name` branches are for isolated changes; open a PR into the current `stable/vX.Y.Z` branch.
 
 ### Release cycle
 
 ```bash
-# 1. All work happens on the current release branch
-git checkout release/v0.3.0
+# 1. All work happens on the current stable branch (created automatically by CI)
+git checkout stable/v0.4.0
 
-# 2. Commit small, logical changes as you go
+# 2. For isolated changes, create a short-lived branch and open a PR
+git checkout -b feat/my-feature
 git add <specific files>
-git commit -m "wip: context sources runner"
-git push origin release/v0.3.0
+git commit -m "feat(scope): short description"
+git push origin feat/my-feature
+# → open PR into stable/v0.4.0
 
 # 3. When the milestone is complete and tested:
-#    Squash all commits into one conventional commit (see docs/commit-conventions.md)
+#    Squash all commits in the stable branch into one conventional commit
 git rebase -i master
 # → set all but the first to 's', write one clean conventional commit message
 
 # 4. Force-push the squashed branch
-git push --force origin release/v0.3.0
+git push --force origin stable/v0.4.0
 
 # 5. Open a PR into master
-#    The PR title should match your squashed commit message
+#    The PR title must match your squashed commit message (CI enforces this)
 
-# 6. On merge — CI automatically creates the version tag based on commit type:
-#    feat:     → minor bump  (v0.2.0 → v0.3.0)
-#    fix:      → patch bump  (v0.3.0 → v0.3.1)
-#    breaking: → major bump  (v0.3.0 → v1.0.0)
+# 6. On merge — CI automatically:
+#    a) Creates a version tag based on commit type:
+#       feat:     → minor bump  (v0.3.0 → v0.4.0)
+#       fix:      → patch bump  (v0.4.0 → v0.4.1)
+#       breaking: → major bump  (v0.4.0 → v1.0.0)
+#    b) Creates the next stable branch (e.g. stable/v0.5.0) from master
+#    c) Protects the new branch (require PR, CI must pass)
 
-# 7. Clean up and open next cycle
+# 7. Switch to the new branch — no manual cleanup needed
 git checkout master && git pull
-git branch -d release/v0.3.0
-git push origin --delete release/v0.3.0
-git checkout -b release/v0.4.0
-git push origin release/v0.4.0
+git checkout stable/v0.5.0
 ```
 
 > **Full squash guide:** [docs/commit-conventions.md](docs/commit-conventions.md)
