@@ -1,8 +1,8 @@
 [tools]
 go = "1.24"
-golangci-lint = "latest"
+golangci-lint = "2.11.4"
 op = "2.32.0"
 
 [tasks.lint]
-run = "golangci-lint run ./..."
+run = "golangci-lint config verify && golangci-lint run ./..."
 description = "Run golangci-lint on the entire project"
