@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -51,17 +52,25 @@ type Application struct {
 }
 
 // New loads config, connects to the database, runs migrations, and wires all dependencies.
-func New() (*Application, error) {
+// verbose overrides the configured log level to "info" when true (--verbose flag).
+func New(verbose bool) (*Application, error) {
 	// 1. Config — Load returns a fully resolved *Config (no global state)
 	cfg, err := config.Load("")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	// 2. Logger — initialised before anything else so all startup logs are formatted
-	logLevel := "info"
+	// 2. Logger — initialised before anything else so all startup logs are formatted.
+	// Priority: NEXUS_LOG_LEVEL env var > --verbose flag > config.yaml logLevel > "warn" (silent default).
+	logLevel := "warn"
 	if cfg.LogLevel != nil && *cfg.LogLevel != "" {
 		logLevel = *cfg.LogLevel
+	}
+	if verbose {
+		logLevel = "info"
+	}
+	if env := os.Getenv("NEXUS_LOG_LEVEL"); env != "" {
+		logLevel = env
 	}
 	logger.Init(logLevel)
 
@@ -208,8 +217,6 @@ func maskDSN(dsn string) string {
 
 // firstLine returns just the first line of a SQL statement for error messages.
 func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
-	}
-	return strings.TrimSpace(s)
+	line, _, _ := strings.Cut(s, "\n")
+	return strings.TrimSpace(line)
 }

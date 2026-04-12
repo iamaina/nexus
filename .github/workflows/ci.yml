@@ -22,3 +22,47 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
+
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+  build:
+    name: build and version check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for git describe --tags
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        run: make build
+
+      - name: Version check
+        run: |
+          version=$(./nexus --version 2>&1)
+          echo "Binary reports: $version"
+          if echo "$version" | grep -qE "v[0-9]+\.[0-9]+\.[0-9]+|dev|[0-9a-f]{7}"; then
+            echo "✅ Version string is valid"
+          else
+            echo "❌ Unexpected version output: $version"
+            exit 1
+          fi
+
+      - name: Smoke test — help flag
+        run: ./nexus --help

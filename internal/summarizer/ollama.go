@@ -55,14 +55,34 @@ func (s *OllamaSummarizer) SummarizeWithLive(ctx context.Context, question strin
 		return "I couldn't find any relevant information in your knowledge base.", nil
 	}
 
+	prompt := buildPrompt(question, results, liveOutputs)
+
+	var answer strings.Builder
+	err := s.client.Generate(ctx, &api.GenerateRequest{
+		Model:  s.model,
+		Prompt: prompt,
+	}, func(resp api.GenerateResponse) error {
+		answer.WriteString(resp.Response)
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("ollama generate: %w", err)
+	}
+
+	return answer.String(), nil
+}
+
+// buildPrompt constructs the full LLM prompt from the question, retrieved chunks,
+// and any live context outputs. Extracted as a package-level function for testability.
+func buildPrompt(question string, results []models.Result, liveOutputs []live.Output) string {
 	var ctxBuilder strings.Builder
-	for i, r := range results {
+	for _, r := range results {
 		book := strings.TrimSuffix(filepath.Base(r.File), filepath.Ext(r.File))
 		source := book
 		if r.Chapter != "" {
 			source = fmt.Sprintf("%s — %s", book, r.Chapter)
 		}
-		fmt.Fprintf(&ctxBuilder, "[%d] %s\n%s\n\n", i+1, source, r.Text)
+		fmt.Fprintf(&ctxBuilder, "[%s]\n%s\n\n", source, r.Text)
 	}
 
 	// Build live context section — only include successful outputs.
@@ -84,11 +104,11 @@ func (s *OllamaSummarizer) SummarizeWithLive(ctx context.Context, question strin
 		staticSection = "\nKnowledge Base:\n" + ctxBuilder.String()
 	}
 
-	prompt := fmt.Sprintf(`You are a knowledgeable assistant with access to a personal library and live environment data.
+	return fmt.Sprintf(`You are a knowledgeable assistant with access to a personal library and live environment data.
 Answer the question using the context below. Always answer in English.
 Rules:
-- Cite knowledge base sources inline, e.g. "According to [1] Pro Git — Git Basics, ..."
-- Reference live context sources as [live:<name>], e.g. "Your cluster currently shows [live:kubectl] ..."
+- Cite knowledge base sources inline using the label in brackets, e.g. "According to [progit — Git Basics], ..."
+- Reference live context sources as [live:<name>], e.g. "Your cluster currently shows [live:work-status] ..."
 - When multiple sources cover the same topic, synthesise them into one coherent explanation
 - Prefer live context over static sources when they conflict — live data is more current
 - Include specific details, comparisons, and examples that appear in the context
@@ -98,18 +118,4 @@ Rules:
 Question: %s
 %s%s
 Answer:`, question, liveSection, staticSection)
-
-	var answer strings.Builder
-	err := s.client.Generate(ctx, &api.GenerateRequest{
-		Model:  s.model,
-		Prompt: prompt,
-	}, func(resp api.GenerateResponse) error {
-		answer.WriteString(resp.Response)
-		return nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("ollama generate: %w", err)
-	}
-
-	return answer.String(), nil
 }

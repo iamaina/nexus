@@ -73,6 +73,55 @@ func (m *DocumentModel) List(ctx context.Context, source string) ([]Document, er
 	return docs, rows.Err()
 }
 
+// FindByName returns all documents whose file path contains name (case-insensitive).
+func (m *DocumentModel) FindByName(ctx context.Context, name string) ([]Document, error) {
+	rows, err := m.DB.Query(ctx,
+		`SELECT id, source_name, file_path, chunk_count, char_count,
+		        TO_CHAR(ingest_time, 'YYYY-MM-DD HH24:MI') AS ingest_time
+		 FROM documents
+		 WHERE file_path ILIKE '%' || $1 || '%'
+		 ORDER BY source_name, file_path`,
+		name,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var docs []Document
+	for rows.Next() {
+		var d Document
+		if err := rows.Scan(&d.ID, &d.SourceName, &d.FilePath, &d.ChunkCount, &d.CharCount, &d.IngestTime); err != nil {
+			return nil, err
+		}
+		docs = append(docs, d)
+	}
+	return docs, rows.Err()
+}
+
+// Summary returns per-source document and chunk counts, ordered by source name.
+func (m *DocumentModel) Summary(ctx context.Context) ([]SourceSummary, error) {
+	rows, err := m.DB.Query(ctx,
+		`SELECT source_name, COUNT(*) AS doc_count, COALESCE(SUM(chunk_count), 0) AS chunk_count
+		 FROM documents
+		 GROUP BY source_name
+		 ORDER BY source_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SourceSummary
+	for rows.Next() {
+		var s SourceSummary
+		if err := rows.Scan(&s.SourceName, &s.DocCount, &s.ChunkCount); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // Insert upserts document metadata and returns the document ID.
 // meta may be nil for batch ingestion; when provided the classification
 // columns (doc_type, language, institution, doc_date) are stored too.

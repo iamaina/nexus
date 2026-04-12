@@ -18,7 +18,7 @@ var force bool
 
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
-	Short: "Ingest documents from configured sources",
+	Short: "Index documents from your configured source folders",
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 
@@ -54,6 +54,17 @@ var ingestCmd = &cobra.Command{
 						slog.Any("err", err))
 					return err
 				}
+
+				// Skip paths matching any exclude pattern.
+				for _, excl := range src.Exclude {
+					if strings.Contains(path, excl) {
+						if d.IsDir() {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+				}
+
 				if d.IsDir() {
 					return nil
 				}

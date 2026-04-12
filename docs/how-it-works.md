@@ -130,7 +130,7 @@ nexus/
 
 **pgx.Batch for bulk writes.** Storing 200 chunks one-by-one is 200 database round-trips. nexus sends all chunk inserts as a single batch — one round-trip per document, regardless of chunk count.
 
-**layout is stable.** The parser in `internal/layout/` is the most complex part of the codebase. It took several iterations to get right. Do not change it unless you understand the full pipeline. Read CLAUDE.md section 3 first.
+**layout is stable.** The parser in `internal/layout/` is the most complex part of the codebase. It took several iterations to get right. Do not change it unless you understand the full pipeline. Read the canonical pipeline section in [CONTRIBUTING.md](../CONTRIBUTING.md) first.
 
 ---
 
