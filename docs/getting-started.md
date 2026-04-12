@@ -18,60 +18,41 @@ None of these talk to the internet after initial download.
 
 ## Prerequisites
 
-### Go 1.22+
+All tool versions are pinned in `.mise.toml`. Do not install tools manually — `make bootstrap` handles everything so versions stay consistent.
 
-The application is written in Go. You need the Go compiler to build it, or `go run` to run it directly during development.
+### Step 1 — Install mise
 
-```bash
-brew install go
-go version   # should show 1.22.x or higher
-```
-
-### Python 3.9+
-
-PDF text extraction is done by a small Python script (`scripts/extract_pdf.py`) using PyMuPDF. PyMuPDF provides glyph-level coordinates and font sizes, which nexus uses to detect headings and document structure. There is no Go library that gives this level of detail.
+mise is the version manager for all tools (Go, Python, golangci-lint, etc.).
 
 ```bash
-python3 --version   # should be 3.9+
+brew install mise
 ```
 
-### PostgreSQL 14+
+> Only brew is needed before bootstrap. mise takes over from there.
 
-nexus uses PostgreSQL as its only database. It stores document metadata and the text chunks extracted from your files. The key addition is **pgvector** — an extension that adds a `vector` column type and enables cosine similarity search. This is how "find the most relevant passages about X" works: your question and all your chunks are stored as number arrays (embeddings), and the database finds the ones that are mathematically closest.
+### Step 2 — Run bootstrap
 
 ```bash
-brew install postgresql@14
-brew services start postgresql@14
+make bootstrap
 ```
 
-### Ollama
+This installs everything in one shot:
 
-Ollama runs AI models locally. Think of it as a local server that accepts text and returns generated text, using models stored on your disk. nexus talks to it over HTTP on `localhost:11434`.
+| What | How | Why |
+|---|---|---|
+| Go, Python, golangci-lint, jq, op | mise (pinned in `.mise.toml`) | Version-controlled, explicit upgrades |
+| PostgreSQL 14 | brew (service) | Needs to run as a system daemon |
+| Ollama | brew (service) | Needs to run as a system daemon |
+| pgvector | brew (PG extension) | Must match the installed PostgreSQL version |
+| PyMuPDF | pip (into `.venv/`) | PDF extraction Python library |
 
-```bash
-brew install ollama
-brew services start ollama
-```
-
-After installing, verify it's running:
-
-```bash
-curl http://localhost:11434   # should return "Ollama is running"
-```
-
-### golangci-lint (contributors only)
-
-Only needed if you're modifying the Go code. The linter is enforced before every commit.
-
-```bash
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-```
+To upgrade a tool later: update its version in `.mise.toml`, run `mise install`, verify it works, commit.
 
 ---
 
 ## First-time setup
 
-Run:
+Once bootstrap is complete, run:
 
 ```bash
 make setup
@@ -79,14 +60,13 @@ make setup
 
 This is interactive and handles everything. Here's what it does step by step:
 
-1. **Creates a Python virtual environment** at `.venv/` and installs PyMuPDF
-2. **Starts Ollama** as a macOS launchd service (auto-starts on login)
-3. **Creates a PostgreSQL database** (`opsnexus`) and role (`vaultuser`)
-4. **Enables the pgvector extension** in the database
-5. **Drops and recreates document tables** — safe on first run; required when the embedding model changes (the vector dimension changes)
-6. **Pulls the three Ollama models** — this downloads several gigabytes; expect 10–20 minutes on a first run
-7. **Creates `~/Documents/PersonalDocs/`** with a category folder structure
-8. **Writes `config.yaml`** from your answers to the interactive prompts
+1. **Starts Ollama** as a macOS launchd service (auto-starts on login)
+2. **Creates a PostgreSQL database** (`opsnexus`) and role (`vaultuser`)
+3. **Enables the pgvector extension** in the database
+4. **Runs database migrations** — creates tables on first run; idempotent on subsequent runs
+5. **Pulls the three Ollama models** — this downloads several gigabytes; expect 10–20 minutes on a first run
+6. **Creates `~/Documents/PersonalDocs/`** with a category folder structure
+7. **Writes `config.yaml`** from your answers to the interactive prompts
 
 The database password is stored in your shell environment as `PG_PASSWORD` (written to `~/.zshrc`). If you have 1Password CLI installed and signed in, it is stored there instead.
 

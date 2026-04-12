@@ -31,7 +31,7 @@ var watchedExtensions = map[string]bool{
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
-	Short: "Watch directories and automatically file incoming documents",
+	Short: "Automatically organise and index new files dropped in watched folders",
 	Long: `Watch the directories configured under personal.watchDirs in config.yaml.
 When a supported file (.pdf, .md, .txt) is created, nexus automatically
 classifies it, moves it to PersonalDocs/<category>/, and ingests it.

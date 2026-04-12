@@ -1,9 +1,9 @@
-.PHONY: help bootstrap setup setup-python reset-db lint build install ingest query layout dev cleanup all
+.PHONY: help bootstrap setup setup-python reset-db lint build install ingest query layout dev cleanup all test
 
 help:
 	@echo "nexus Makefile"
 	@echo ""
-	@echo "  make bootstrap                     → Install development tools (mise)"
+	@echo "  make bootstrap                     → Install all dependencies (mise tools from .mise.toml + brew services)"
 	@echo "  make setup                         → First-time setup (idempotent — safe to re-run)"
 	@echo "  make setup reconfigure=1           → Re-run setup and overwrite config.yaml"
 	@echo "  make reset-db                      → DROP all tables and re-run migrations (loses all ingested data)"
@@ -21,9 +21,40 @@ help:
 	@echo ""
 
 bootstrap:
-	@echo "=== nexus bootstrap (tools) ==="
+	@echo "=== nexus bootstrap ==="
+	@echo ""
+	@echo "Tool versions are pinned in .mise.toml — update there to upgrade."
+	@echo ""
+
+	@# mise — single source of truth for all tools (Go, golangci-lint, op, Python, jq)
+	@if ! command -v mise >/dev/null 2>&1; then \
+		echo "mise not found. Install it first:"; \
+		echo "  brew install mise   (or see https://mise.jdx.dev)"; \
+		exit 1; \
+	fi
 	@mise install
-	@echo "✅ Tools installed via mise (Go, golangci-lint, postgres, op)"
+	@echo "✅ Tools installed via mise (see .mise.toml for pinned versions)"
+
+	@# Services — PostgreSQL and Ollama are system services managed by brew.
+	@# pgvector must match the installed PostgreSQL version so brew manages it too.
+	@echo "Checking services (PostgreSQL, Ollama, pgvector)..."
+	@for pkg in postgresql@14 ollama pgvector; do \
+		if ! brew list $$pkg >/dev/null 2>&1; then \
+			echo "  Installing $$pkg via brew..."; \
+			brew install $$pkg; \
+		else \
+			echo "  ✅ $$pkg already installed"; \
+		fi; \
+	done
+
+	@# Python env for PDF extraction (uses mise-managed Python)
+	@echo "Setting up Python environment for PDF extraction..."
+	@mise exec -- python -m venv .venv
+	@.venv/bin/pip install --quiet pymupdf
+	@echo "✅ Python environment ready (.venv)"
+
+	@echo ""
+	@echo "✅ Bootstrap complete. Next: make setup"
 
 setup-python:
 	@echo "=== Setting up Python environment for PDF extraction ==="
@@ -210,6 +241,22 @@ setup:
 		echo "    extensions:" >> config.yaml; \
 		echo "      - .md" >> config.yaml; \
 		echo "      - .txt" >> config.yaml; \
+		read -p "Subdirectories to exclude from ops-notes (comma-separated, e.g. GitLab_runbooks) [skip]: " ops_excludes; \
+		if [ -n "$$ops_excludes" ]; then \
+			echo "    exclude:" >> config.yaml; \
+			echo "$$ops_excludes" | tr ',' '\n' | while IFS= read -r excl; do \
+				excl=$$(echo "$$excl" | xargs); \
+				[ -n "$$excl" ] && echo "      - $$excl" >> config.yaml; \
+			done; \
+		fi; \
+		read -p "Runbooks folder path (leave blank to skip): " runbooks_path; \
+		if [ -n "$$runbooks_path" ]; then \
+			echo "  - name: runbooks" >> config.yaml; \
+			echo "    path: $$runbooks_path" >> config.yaml; \
+			echo "    extensions:" >> config.yaml; \
+			echo "      - .md" >> config.yaml; \
+			echo "      - .txt" >> config.yaml; \
+		fi; \
 		echo "" >> config.yaml; \
 		echo "postgres:" >> config.yaml; \
 		echo '  dsn: "postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> config.yaml; \
@@ -241,6 +288,9 @@ setup:
 	@echo ""
 	@echo "To reset ingested data (e.g. after changing embedding model): make reset-db"
 
+test:
+	go test ./...
+
 lint:
 	mise run lint
 
@@ -254,6 +304,8 @@ build:
 install:
 	go build $(LDFLAGS) -o ~/.local/bin/nexus .
 	@echo "✅ nexus $(VERSION) installed to ~/.local/bin"
+	@~/.local/bin/nexus completion zsh > "$$(brew --prefix)/share/zsh/site-functions/_nexus"
+	@echo "✅ Zsh completion installed — run: exec zsh"
 
 ingest:
 	@if [ "$(force)" = "1" ]; then \
@@ -267,10 +319,10 @@ query:
 		echo "Usage: make query question=\"Your question here\" [source=progit] [model=llama3.1:8b]"; \
 		exit 1; \
 	fi
-	@ARGS="$(question)"; \
-	[ -n "$(source)" ] && ARGS="--source $(source) $$ARGS"; \
-	[ -n "$(model)" ]  && ARGS="--model $(model) $$ARGS"; \
-	go run . query $$ARGS
+	@FLAGS=""; \
+	[ -n "$(source)" ] && FLAGS="$$FLAGS --source $(source)"; \
+	[ -n "$(model)" ]  && FLAGS="$$FLAGS --model $(model)"; \
+	go run . query $$FLAGS "$(question)"
 
 layout:
 	@if [ -z "$(file)" ]; then \

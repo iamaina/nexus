@@ -13,6 +13,7 @@ type Source struct {
 	Name       string   `yaml:"name"`
 	Path       string   `yaml:"path"`
 	Extensions []string `yaml:"extensions"`
+	Exclude    []string `yaml:"exclude"` // path substrings to skip (directories or files)
 }
 
 // Personal holds configuration for the personal document safe (Mode 1).
@@ -82,6 +83,9 @@ func (c *Config) resolve() error {
 
 	for i := range c.Sources {
 		c.Sources[i].Path = expandHome(c.Sources[i].Path)
+		for j, excl := range c.Sources[i].Exclude {
+			c.Sources[i].Exclude[j] = expandHome(excl)
+		}
 	}
 	c.Personal.DestDir = expandHome(c.Personal.DestDir)
 	for i, d := range c.Personal.WatchDirs {

@@ -15,7 +15,7 @@ var fileDryRun bool
 
 var fileCmd = &cobra.Command{
 	Use:   "file <path>",
-	Short: "Classify, move, and ingest a personal document",
+	Short: "Classify, rename, and index a single document",
 	Long: `Classify a document using the local LLM, move it to the correct folder
 inside PersonalDocs with a clean filename, then ingest it into nexus.
 

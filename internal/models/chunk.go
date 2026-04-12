@@ -181,6 +181,40 @@ func (m *ChunkModel) FetchContext(ctx context.Context, parent Result, maxChunks 
 	return children, rows.Err()
 }
 
+// ListChaptersByDocumentID returns distinct top-level chapter names for a single document.
+func (m *ChunkModel) ListChaptersByDocumentID(ctx context.Context, docID int64) ([]string, error) {
+	rows, err := m.DB.Query(ctx, `
+		WITH min_level AS (
+			SELECT MIN(section_level) AS lvl
+			FROM chunks
+			WHERE document_id = $1 AND section_level > 0
+		)
+		SELECT chapter
+		FROM chunks
+		CROSS JOIN min_level
+		WHERE document_id = $1
+		  AND chapter IS NOT NULL AND chapter != ''
+		  AND section_level = min_level.lvl
+		GROUP BY chapter
+		ORDER BY MIN(chunk_index)`,
+		docID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chapters []string
+	for rows.Next() {
+		var ch string
+		if err := rows.Scan(&ch); err != nil {
+			return nil, err
+		}
+		chapters = append(chapters, ch)
+	}
+	return chapters, rows.Err()
+}
+
 // ListChaptersByBook returns distinct non-empty chapter names for documents whose
 // file path contains bookName (case-insensitive).
 func (m *ChunkModel) ListChaptersByBook(ctx context.Context, bookName string) ([]string, error) {

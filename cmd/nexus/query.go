@@ -4,6 +4,7 @@ package nexus
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ var (
 
 var queryCmd = &cobra.Command{
 	Use:   "query [question]",
-	Short: "Ask a question against your local knowledge base",
+	Short: "Ask a question in plain English and get a cited answer",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
@@ -37,7 +38,7 @@ var queryCmd = &cobra.Command{
 		}
 
 		queryStart := time.Now()
-		question := args[0]
+		question := strings.Join(args, " ")
 
 		threshold := queryThreshold
 		if threshold == 0 {
@@ -235,6 +236,27 @@ var queryCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Answer:\n\n%s\n", answer)
+
+		// Deduplicated file paths after the answer — open any of these to read more.
+		seenFiles := make(map[string]bool)
+		var sourceFiles []string
+		for _, r := range results {
+			if r.Score > 0 && !seenFiles[r.File] {
+				seenFiles[r.File] = true
+				sourceFiles = append(sourceFiles, r.File)
+			}
+		}
+		if len(sourceFiles) > 0 {
+			home, _ := os.UserHomeDir()
+			fmt.Println("\n  Open to read more:")
+			for _, f := range sourceFiles {
+				p := f
+				if home != "" {
+					p = strings.Replace(f, home, "~", 1)
+				}
+				fmt.Printf("    %s\n", p)
+			}
+		}
 
 		logger.Info(ctx, "query.complete",
 			slog.String("component", "query"),

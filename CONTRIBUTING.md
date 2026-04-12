@@ -18,37 +18,52 @@ nexus is a local-first personal intelligence layer. It runs entirely on your mac
 
 ## Prerequisites
 
-| Tool | Version | Purpose |
-|---|---|---|
-| Go | 1.22+ | Primary language |
-| Python | 3.9+ | PDF extraction via PyMuPDF |
-| PostgreSQL | 15+ | Storage + pgvector |
-| Ollama | latest | LLM inference (local) |
-| golangci-lint | latest | Lint enforcement |
+All tool versions are pinned in `.mise.toml`. Do not install tools manually — let `make bootstrap` handle it so versions stay consistent across machines.
 
-Install dependencies:
+| Tool | Managed by | Purpose |
+|---|---|---|
+| Go | mise (`.mise.toml`) | Primary language |
+| Python | mise (`.mise.toml`) | PDF extraction via PyMuPDF |
+| golangci-lint | mise (`.mise.toml`) | Lint enforcement |
+| jq | mise (`.mise.toml`) | JSON processing for live sources |
+| 1Password CLI (`op`) | mise (`.mise.toml`) | Secrets management |
+| PostgreSQL 14 | brew (service) | Storage + pgvector |
+| Ollama | brew (service) | LLM inference (local) |
+| pgvector | brew (PG extension) | Vector similarity search |
+
+Install everything:
 ```bash
-brew install go postgresql@15 ollama
-pip install pymupdf
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+# Install mise first (one-time, any machine)
+brew install mise
+
+# Then let mise + bootstrap handle the rest
+make bootstrap
 ```
+
+To upgrade a tool: update its version in `.mise.toml`, run `mise install`, verify it works, commit.
 
 ---
 
 ## Development Setup
 
-`make setup` handles everything end-to-end:
+After `make bootstrap`, run setup:
 
 ```bash
 make setup
 ```
 
 This:
-1. Creates the PostgreSQL database and user
-2. Creates `config.yaml` from the template (gitignored — your local config)
-3. Drops and recreates tables (required when switching embedding model dimensions)
+1. Starts Ollama as a macOS launchd service
+2. Creates the PostgreSQL database and user
+3. Runs DB migrations (idempotent — safe to re-run)
 4. Pulls the three Ollama models: `mxbai-embed-large`, `qwen2.5:7b`, `llama3.1:8b`
 5. Creates `~/Documents/PersonalDocs/` directory tree
+6. Writes `config.yaml` from interactive prompts (gitignored — your local config)
+
+To reset all ingested data (e.g. after changing the embedding model):
+```bash
+make reset-db
+```
 
 To ingest your documents after setup:
 ```bash
@@ -84,7 +99,7 @@ nexus/
 └── config.yaml         (gitignored — created by make setup)
 ```
 
-The `internal/layout/` package is the most complex. It implements the full document structure pipeline: raw spans → lines → font analysis → heading detection → blocks → heading tree → sections → chunks. Read `CLAUDE.md` section 3 before touching it.
+The `internal/layout/` package is the most complex. It implements the full document structure pipeline: raw spans → lines → font analysis → heading detection → blocks → heading tree → sections → chunks. Read the [How It Works](docs/how-it-works.md) doc before touching it.
 
 ---
 
@@ -92,31 +107,47 @@ The `internal/layout/` package is the most complex. It implements the full docum
 
 ```
 master          ──●─────────────────────●──────────────────────●──
-                 v0.2.0                v0.3.0                 v0.4.0
+                 v0.0.1                v0.1.0                 v0.2.0
                     \                     \
-stable/v0.3.0        ●──●──●──●──merge     \
-                                             stable/v0.4.0    ●──●──...
+stable/v0.1.0        ●──●──●──●──merge     \
+                                             stable/v0.2.0    ●──●──...
 ```
 
 ### Rules
 
 - **`master`** — always stable. Only receives merges from a `stable/vX.Y.Z` branch. Never commit directly. Every merge is tagged automatically.
-- **`stable/vX.Y.Z`** — the single working branch for all work toward the next release. Created automatically by CI after each tag is pushed. Devs branch off this and open PRs back into it.
-- **One working branch at a time.** When `stable/v0.3.0` merges to master and the `v0.3.0` tag is pushed, CI creates `stable/v0.4.0` automatically.
-- Short-lived `fix/name` or `feat/name` branches are for isolated changes; open a PR into the current `stable/vX.Y.Z` branch.
+- **`stable/vX.Y.Z`** — the single working branch for all work toward the next release. Created automatically by CI after each tag is pushed.
+- **Feature branches** — branch off `stable/vX.Y.Z`, open a PR back into it when ready. Name them `feat/<description>` or `fix/<description>`. CI runs lint + build on every PR.
+- **One stable branch at a time.** When `stable/v0.1.0` merges to master and the `v0.1.0` tag is pushed, CI creates `stable/v0.2.0` automatically.
+
+### Feature branch flow
+
+```bash
+# Branch off the current stable branch
+git checkout stable/v0.1.0
+git checkout -b feat/ocr-support
+
+# Work, commit, push
+git add <specific files>
+git commit -m "feat(watch): add OCR via Tesseract for document photos"
+git push origin feat/ocr-support
+
+# Open a PR into stable/v0.1.0 — CI runs lint + build
+# Squash merge when approved
+```
 
 ### Release cycle
 
 ```bash
 # 1. All work happens on the current stable branch (created automatically by CI)
-git checkout stable/v0.4.0
+git checkout stable/v0.1.0
 
 # 2. For isolated changes, create a short-lived branch and open a PR
 git checkout -b feat/my-feature
 git add <specific files>
 git commit -m "feat(scope): short description"
 git push origin feat/my-feature
-# → open PR into stable/v0.4.0
+# → open PR into stable/v0.1.0
 
 # 3. When the milestone is complete and tested:
 #    Squash all commits in the stable branch into one conventional commit
@@ -124,17 +155,17 @@ git rebase -i master
 # → set all but the first to 's', write one clean conventional commit message
 
 # 4. Force-push the squashed branch
-git push --force origin stable/v0.4.0
+git push --force origin stable/v0.1.0
 
 # 5. Open a PR into master
 #    The PR title must match your squashed commit message (CI enforces this)
 
 # 6. On merge — CI automatically:
 #    a) Creates a version tag based on commit type:
-#       feat:     → minor bump  (v0.3.0 → v0.4.0)
-#       fix:      → patch bump  (v0.4.0 → v0.4.1)
-#       breaking: → major bump  (v0.4.0 → v1.0.0)
-#    b) Creates the next stable branch (e.g. stable/v0.5.0) from master
+#       feat:     → minor bump  (v0.0.1 → v0.1.0)
+#       fix:      → patch bump  (v0.1.0 → v0.1.1)
+#       breaking: → major bump  (v0.1.0 → v1.0.0)
+#    b) Creates the next stable branch (e.g. stable/v0.2.0) from master
 #    c) Protects the new branch (require PR, CI must pass)
 
 # 7. Switch to the new branch — no manual cleanup needed

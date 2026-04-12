@@ -16,6 +16,13 @@ type Document struct {
 	DocDate     string
 }
 
+// SourceSummary holds aggregate counts for one ingested source.
+type SourceSummary struct {
+	SourceName string
+	DocCount   int
+	ChunkCount int
+}
+
 // DocMeta carries optional classification metadata written to the documents table.
 // It is nil for batch ingestion (nexus ingest) and populated by nexus file.
 type DocMeta struct {
