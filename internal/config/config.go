@@ -25,11 +25,17 @@ type Personal struct {
 
 // RepoRoot describes a directory where git repositories are cloned.
 // nexus uses it to locate existing clones and suggest placement for new ones.
+//
+// Matching priority: host substring first, then group/org prefix if provided.
+// This resolves ambiguity when both work and personal repos share the same host
+// (e.g. gitlab.com): work repos live under specific groups (gl-infra, gitlab-org),
+// personal repos live under a personal namespace (iamaina).
 type RepoRoot struct {
-	Name  string   `yaml:"name"`  // e.g. "work", "personal-github", "personal-gitlab"
-	Path  string   `yaml:"path"`  // absolute or ~ path to the root directory
-	Hosts []string `yaml:"hosts"` // git host substrings whose repos belong here — "gitlab" matches gitlab.com, ops.gitlab.net, etc.
-	Watch bool     `yaml:"watch"` // if true, nexus watch registers new .git dirs automatically
+	Name   string   `yaml:"name"`   // e.g. "work", "personal-github", "personal-gitlab"
+	Path   string   `yaml:"path"`   // absolute or ~ path to the root directory
+	Hosts  []string `yaml:"hosts"`  // git host substrings — "gitlab" matches gitlab.com, ops.gitlab.net, etc.
+	Groups []string `yaml:"groups"` // org/group prefixes that narrow host matches — "gl-infra" matches gl-infra/* repos
+	Watch  bool     `yaml:"watch"`  // if true, nexus watch registers new .git dirs automatically
 }
 
 // Roots holds the workspace OS configuration (Mode 3).
