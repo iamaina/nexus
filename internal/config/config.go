@@ -14,6 +14,7 @@ type Source struct {
 	Path       string   `yaml:"path"`
 	Extensions []string `yaml:"extensions"`
 	Exclude    []string `yaml:"exclude"` // path substrings to skip (directories or files)
+	Watch      bool     `yaml:"watch"`   // if true, nexus watch re-ingests files on change
 }
 
 // Personal holds configuration for the personal document safe (Mode 1).
@@ -22,10 +23,27 @@ type Personal struct {
 	DestDir   string   `yaml:"destDir"`
 }
 
+// RepoRoot describes a directory where git repositories are cloned.
+// nexus uses it to locate existing clones and suggest placement for new ones.
+type RepoRoot struct {
+	Name  string   `yaml:"name"`  // e.g. "work", "personal-github", "personal-gitlab"
+	Path  string   `yaml:"path"`  // absolute or ~ path to the root directory
+	Hosts []string `yaml:"hosts"` // git hosts whose repos belong here (e.g. ["github.com"])
+	Watch bool     `yaml:"watch"` // if true, nexus watch registers new .git dirs automatically
+}
+
+// Roots holds the workspace OS configuration (Mode 3).
+// All fields are optional — omitting this section changes no existing behaviour.
+type Roots struct {
+	Workspace string     `yaml:"workspace"` // top-level workspace directory to watch for structural changes
+	Repos     []RepoRoot `yaml:"repos"`     // repo roots by type and platform
+}
+
 // Config is the fully resolved application configuration.
 type Config struct {
 	Sources  []Source `yaml:"sources"`
 	Personal Personal `yaml:"personal"`
+	Roots    Roots    `yaml:"roots"` // workspace OS layer — optional, safe to omit
 	Postgres struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"postgres"`
@@ -90,6 +108,11 @@ func (c *Config) resolve() error {
 	c.Personal.DestDir = expandHome(c.Personal.DestDir)
 	for i, d := range c.Personal.WatchDirs {
 		c.Personal.WatchDirs[i] = expandHome(d)
+	}
+
+	c.Roots.Workspace = expandHome(c.Roots.Workspace)
+	for i := range c.Roots.Repos {
+		c.Roots.Repos[i].Path = expandHome(c.Roots.Repos[i].Path)
 	}
 
 	password := os.Getenv("PG_PASSWORD")

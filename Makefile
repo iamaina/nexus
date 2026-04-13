@@ -271,6 +271,39 @@ setup:
 		echo "    - ~/Downloads" >> config.yaml; \
 		echo "    - ~/Desktop" >> config.yaml; \
 		echo "  destDir: ~/Documents/PersonalDocs" >> config.yaml; \
+		echo "" >> config.yaml; \
+		echo "# Workspace OS — roots tell nexus about your full directory structure." >> config.yaml; \
+		echo "# Leave blank to skip (you can add this section manually later)." >> config.yaml; \
+		read -p "Workspace root (e.g. ~/ops-nexus) [skip]: " workspace_root; \
+		if [ -n "$$workspace_root" ]; then \
+			echo "roots:" >> config.yaml; \
+			echo "  workspace: $$workspace_root" >> config.yaml; \
+			echo "  repos:" >> config.yaml; \
+			read -p "  Work repos path (e.g. ~/ops-nexus/active-ops/gitlab-work) [skip]: " work_repos; \
+			if [ -n "$$work_repos" ]; then \
+				read -p "  Work git host (e.g. gitlab.com) [gitlab.com]: " work_host; \
+				[ -z "$$work_host" ] && work_host="gitlab.com"; \
+				echo "    - name: work" >> config.yaml; \
+				echo "      path: $$work_repos" >> config.yaml; \
+				echo "      hosts: [$$work_host]" >> config.yaml; \
+				echo "      watch: true" >> config.yaml; \
+			fi; \
+			read -p "  Personal GitHub repos path (e.g. ~/ops-nexus/repos/personal/github) [skip]: " gh_repos; \
+			if [ -n "$$gh_repos" ]; then \
+				echo "    - name: personal-github" >> config.yaml; \
+				echo "      path: $$gh_repos" >> config.yaml; \
+				echo "      hosts: [github.com]" >> config.yaml; \
+				echo "      watch: true" >> config.yaml; \
+			fi; \
+			read -p "  Personal GitLab repos path (e.g. ~/ops-nexus/repos/personal/gitlab) [skip]: " gl_repos; \
+			if [ -n "$$gl_repos" ]; then \
+				echo "    - name: personal-gitlab" >> config.yaml; \
+				echo "      path: $$gl_repos" >> config.yaml; \
+				echo "      hosts: [gitlab.com]" >> config.yaml; \
+				echo "      watch: true" >> config.yaml; \
+			fi; \
+		fi; \
+		echo "" >> config.yaml; \
 		echo "relevanceThreshold: 0.70" >> config.yaml; \
 		echo "logLevel: info" >> config.yaml; \
 		rm -f .ollama_gen_model; \
