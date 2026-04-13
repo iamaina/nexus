@@ -281,11 +281,17 @@ setup:
 			echo "  repos:" >> config.yaml; \
 			read -p "  Work repos path (e.g. ~/ops-nexus/active-ops/gitlab-work) [skip]: " work_repos; \
 			if [ -n "$$work_repos" ]; then \
-				read -p "  Work git host (e.g. gitlab.com) [gitlab.com]: " work_host; \
-				[ -z "$$work_host" ] && work_host="gitlab.com"; \
+				echo "  Tip: hosts are matched by substring — enter 'gitlab' to match gitlab.com,"; \
+				echo "       ops.gitlab.net, dev.gitlab.org, pre.gitlab.com, etc."; \
+				read -p "  Work git host(s), comma-separated (e.g. gitlab) [gitlab]: " work_hosts_raw; \
+				[ -z "$$work_hosts_raw" ] && work_hosts_raw="gitlab"; \
 				echo "    - name: work" >> config.yaml; \
 				echo "      path: $$work_repos" >> config.yaml; \
-				echo "      hosts: [$$work_host]" >> config.yaml; \
+				echo "      hosts:" >> config.yaml; \
+				echo "$$work_hosts_raw" | tr ',' '\n' | while IFS= read -r h; do \
+					h=$$(echo "$$h" | xargs); \
+					[ -n "$$h" ] && echo "        - $$h" >> config.yaml; \
+				done; \
 				echo "      watch: true" >> config.yaml; \
 			fi; \
 			read -p "  Personal GitHub repos path (e.g. ~/ops-nexus/repos/personal/github) [skip]: " gh_repos; \

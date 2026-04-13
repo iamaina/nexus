@@ -28,7 +28,7 @@ type Personal struct {
 type RepoRoot struct {
 	Name  string   `yaml:"name"`  // e.g. "work", "personal-github", "personal-gitlab"
 	Path  string   `yaml:"path"`  // absolute or ~ path to the root directory
-	Hosts []string `yaml:"hosts"` // git hosts whose repos belong here (e.g. ["github.com"])
+	Hosts []string `yaml:"hosts"` // git host substrings whose repos belong here — "gitlab" matches gitlab.com, ops.gitlab.net, etc.
 	Watch bool     `yaml:"watch"` // if true, nexus watch registers new .git dirs automatically
 }
 
