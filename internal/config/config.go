@@ -32,7 +32,8 @@ type Personal struct {
 //   - Work roots have no groups — they catch everything the personal roots don't claim.
 //
 // Example: gitlab.com/amaina/my-project → personal-gitlab (host+group match)
-//          gitlab.com/gl-infra/delivery  → work           (host-only, personal doesn't match)
+//
+//	gitlab.com/gl-infra/delivery  → work           (host-only, personal doesn't match)
 type RepoRoot struct {
 	Name   string   `yaml:"name"`   // e.g. "work", "personal-github", "personal-gitlab"
 	Path   string   `yaml:"path"`   // absolute or ~ path to the root directory
