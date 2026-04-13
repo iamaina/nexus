@@ -281,11 +281,9 @@ setup:
 			echo "  repos:" >> config.yaml; \
 			read -p "  Work repos path (e.g. ~/ops-nexus/active-ops/gitlab-work) [skip]: " work_repos; \
 			if [ -n "$$work_repos" ]; then \
-				echo "  Tip: hosts use substring matching — 'gitlab' matches gitlab.com, ops.gitlab.net, etc."; \
-				read -p "  Work git host(s), comma-separated [gitlab]: " work_hosts_raw; \
+				echo "  Tip: 'gitlab' matches gitlab.com, ops.gitlab.net, dev.gitlab.org, etc."; \
+				read -p "  Work git host substring(s), comma-separated [gitlab]: " work_hosts_raw; \
 				[ -z "$$work_hosts_raw" ] && work_hosts_raw="gitlab"; \
-				echo "  Tip: groups narrow matches when host is shared (e.g. gl-infra,gitlab-org,gitlab-com)."; \
-				read -p "  Work git group(s)/org(s), comma-separated [skip]: " work_groups_raw; \
 				echo "    - name: work" >> config.yaml; \
 				echo "      path: $$work_repos" >> config.yaml; \
 				echo "      hosts:" >> config.yaml; \
@@ -293,35 +291,25 @@ setup:
 					h=$$(echo "$$h" | xargs); \
 					[ -n "$$h" ] && echo "        - $$h" >> config.yaml; \
 				done; \
-				if [ -n "$$work_groups_raw" ]; then \
-					echo "      groups:" >> config.yaml; \
-					echo "$$work_groups_raw" | tr ',' '\n' | while IFS= read -r g; do \
-						g=$$(echo "$$g" | xargs); \
-						[ -n "$$g" ] && echo "        - $$g" >> config.yaml; \
-					done; \
-				fi; \
+				echo "      # no groups — work root is the fallback for all unmatched gitlab repos" >> config.yaml; \
 				echo "      watch: true" >> config.yaml; \
 			fi; \
 			read -p "  Personal GitHub repos path (e.g. ~/ops-nexus/repos/personal/github) [skip]: " gh_repos; \
 			if [ -n "$$gh_repos" ]; then \
-				read -p "  Your GitHub username [skip]: " gh_user; \
+				read -p "  Your GitHub username (used to identify your repos): " gh_user; \
 				echo "    - name: personal-github" >> config.yaml; \
 				echo "      path: $$gh_repos" >> config.yaml; \
 				echo "      hosts: [github.com]" >> config.yaml; \
-				if [ -n "$$gh_user" ]; then \
-					echo "      groups: [$$gh_user]" >> config.yaml; \
-				fi; \
+				[ -n "$$gh_user" ] && echo "      groups: [$$gh_user]" >> config.yaml; \
 				echo "      watch: true" >> config.yaml; \
 			fi; \
 			read -p "  Personal GitLab repos path (e.g. ~/ops-nexus/repos/personal/gitlab) [skip]: " gl_repos; \
 			if [ -n "$$gl_repos" ]; then \
-				read -p "  Your GitLab username [skip]: " gl_user; \
+				read -p "  Your GitLab username (used to identify your repos): " gl_user; \
 				echo "    - name: personal-gitlab" >> config.yaml; \
 				echo "      path: $$gl_repos" >> config.yaml; \
 				echo "      hosts: [gitlab.com]" >> config.yaml; \
-				if [ -n "$$gl_user" ]; then \
-					echo "      groups: [$$gl_user]" >> config.yaml; \
-				fi; \
+				[ -n "$$gl_user" ] && echo "      groups: [$$gl_user]" >> config.yaml; \
 				echo "      watch: true" >> config.yaml; \
 			fi; \
 		fi; \
