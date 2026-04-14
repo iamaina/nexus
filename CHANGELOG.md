@@ -9,6 +9,24 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+**Mode 3 — Workspace OS (Phase 1 & 2)**
+- `roots` config section: `workspace` root and typed `repos` roots (`work`, `personal-github`, `personal-gitlab`) with host substring matching and most-specific-wins group routing
+- `source.watch: bool` — marks a source for periodic re-ingestion by `nexus watch`
+- `internal/workspace` package — generates `dir_structure.md`: annotated tree view + flat Repository Index (name, full path, remote, branch, status per repo)
+- `nexus watch` extended to four concurrent modes: personal intake (fsnotify), source re-scan (5-min ticker), workspace structural snapshot (fsnotify + debounce), repo root detection (fsnotify, 10s settle)
+- `make watch-install` / `make watch-restart` / `make watch-uninstall` — launchd service management; logs to `~/Library/Logs/nexus-watch.log`
+
+**Bug fixes**
+- Body font detection: exclude bold lines from frequency count — fixes chapter detection in code-heavy Markdown documents
+- `ListChaptersByDocumentID`: fall through to level+1 when only one chapter at minimum level — fixes documents showing a single title-level chapter
+- `ChunkModel.Store`: delete existing chunks before insert — prevents stale chunks when re-ingesting a document with fewer chunks
+
+**`make setup` additions**
+- Prompts for ops-notes exclude patterns and optional runbooks source
+- Prompts for workspace root, work repos path and host substrings, personal GitHub and GitLab repos and usernames
+
 ---
 
 ## [v0.0.1] — 2026-04-10

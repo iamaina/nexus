@@ -173,24 +173,33 @@ nexus file ~/Downloads/invoice-april-2026.pdf --dry-run
 
 ## Watch mode
 
-Instead of manually running `nexus file`, watch mode does it automatically for any new file that appears in configured directories.
+`nexus watch` runs continuously in the background, monitoring multiple directory types at once.
 
 ```bash
-nexus watch
+make watch-install   # install as a launchd service — starts now and on every login
 ```
 
-This watches `personal.watchDirs` from `config.yaml` (default: `~/Downloads` and `~/Desktop`). When a `.pdf`, `.md`, or `.txt` file is created:
+What it watches:
 
-1. nexus waits 3 seconds to ensure the file has finished writing (browser downloads, phone transfers)
-2. Classifies, moves, and ingests it automatically
-3. Prints a one-line confirmation
+- **`personal.watchDirs`** (`~/Downloads`, `~/Desktop` by default) — when a `.pdf`, `.md`, or `.txt` file appears, nexus classifies it, moves it to `PersonalDocs/`, and ingests it automatically
+- **Sources with `watch: true`** — re-scans every 5 minutes and ingests any new or changed files
+- **`roots.workspace`** (if configured) — regenerates `dir_structure.md` whenever the workspace structure changes, keeping the snapshot queryable
+- **`roots.repos`** (if configured) — detects newly cloned repositories
+
+**Example log output:**
 
 ```
   → Detected: invoice-april-2026.pdf
   ✓ Filed [invoice/en]: 2026-04_Canva_Invoice.pdf
+  ✓ Workspace snapshot updated: ~/ops-nexus/dir_structure.md
 ```
 
-Run `nexus watch` in a terminal you leave open, or wire it to a launchd agent to run at login.
+Check logs and status:
+
+```bash
+tail -f ~/Library/Logs/nexus-watch.log
+launchctl list | grep nexus
+```
 
 ---
 

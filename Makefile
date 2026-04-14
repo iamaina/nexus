@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup setup-python reset-db lint build install ingest query layout dev cleanup all test
+.PHONY: help bootstrap setup setup-python reset-db lint build install ingest query layout dev cleanup all test watch-install watch-uninstall watch-restart
 
 help:
 	@echo "nexus Makefile"
@@ -17,7 +17,10 @@ help:
 	@echo "  make query question=\"...\" model=llama3.1:8b     → Use a specific generation model"
 	@echo "  make layout file=<pdf>             → Pipeline summary for a PDF"
 	@echo "  make layout file=<pdf> flags=\"--chunks --page-from 1 --page-to 10\""
-	@echo "  make cleanup                       → Delete DB, config, and binary (fresh start)"
+	@echo "  make watch-install                 → Install nexus watch as a launchd background service"
+	@echo "  make watch-restart                 → Restart the background service (e.g. after make install)"
+	@echo "  make watch-uninstall               → Stop and remove the background service"
+	@echo "  make cleanup                       → Delete DB, config, binary, and background service (fresh start)"
 	@echo ""
 
 bootstrap:
@@ -281,6 +284,7 @@ setup:
 			echo "  repos:" >> config.yaml; \
 			read -p "  Work repos path (e.g. ~/ops-nexus/active-ops/gitlab-work) [skip]: " work_repos; \
 			if [ -n "$$work_repos" ]; then \
+				mkdir -p "$$(eval echo $$work_repos)"; \
 				echo "  Tip: 'gitlab' matches gitlab.com, ops.gitlab.net, dev.gitlab.org, etc."; \
 				read -p "  Work git host substring(s), comma-separated [gitlab]: " work_hosts_raw; \
 				[ -z "$$work_hosts_raw" ] && work_hosts_raw="gitlab"; \
@@ -296,6 +300,7 @@ setup:
 			fi; \
 			read -p "  Personal GitHub repos path (e.g. ~/ops-nexus/repos/personal/github) [skip]: " gh_repos; \
 			if [ -n "$$gh_repos" ]; then \
+				mkdir -p "$$(eval echo $$gh_repos)"; \
 				read -p "  Your GitHub username (used to identify your repos): " gh_user; \
 				echo "    - name: personal-github" >> config.yaml; \
 				echo "      path: $$gh_repos" >> config.yaml; \
@@ -305,6 +310,7 @@ setup:
 			fi; \
 			read -p "  Personal GitLab repos path (e.g. ~/ops-nexus/repos/personal/gitlab) [skip]: " gl_repos; \
 			if [ -n "$$gl_repos" ]; then \
+				mkdir -p "$$(eval echo $$gl_repos)"; \
 				read -p "  Your GitLab username (used to identify your repos): " gl_user; \
 				echo "    - name: personal-gitlab" >> config.yaml; \
 				echo "      path: $$gl_repos" >> config.yaml; \
@@ -393,6 +399,10 @@ cleanup:
 	@rm -f ~/.local/bin/nexus
 	@rm -f config.yaml
 
+	@echo "Stopping nexus watch service (if installed)..."
+	@launchctl bootout gui/$$(id -u)/$(WATCH_PLIST_LABEL) 2>/dev/null || true
+	@rm -f "$(WATCH_PLIST_FILE)"
+
 	@echo "Stopping Ollama service..."
 	@brew services stop ollama 2>/dev/null || true
 
@@ -402,5 +412,69 @@ cleanup:
 	@ollama rm llama3.1:8b 2>/dev/null || true
 
 	@echo "✅ Cleanup complete. You can now run 'make setup' for a fresh start."
+
+WATCH_PLIST_LABEL := com.nexus.watch
+WATCH_PLIST_FILE  := $(HOME)/Library/LaunchAgents/$(WATCH_PLIST_LABEL).plist
+WATCH_LOG         := $(HOME)/Library/Logs/nexus-watch.log
+
+watch-install:
+	@echo "=== Installing nexus watch as a launchd background service ==="
+	@if [ ! -f "$(HOME)/.local/bin/nexus" ]; then \
+		echo "❌ nexus not installed — run 'make install' first."; exit 1; \
+	fi
+	@if [ -z "$$PG_PASSWORD" ]; then \
+		echo "❌ PG_PASSWORD not set — run: source ~/.zshrc"; exit 1; \
+	fi
+	@mkdir -p "$(HOME)/Library/Logs"
+	@{ \
+	echo '<?xml version="1.0" encoding="UTF-8"?>'; \
+	echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'; \
+	echo '<plist version="1.0">'; \
+	echo '<dict>'; \
+	echo '    <key>Label</key>'; \
+	echo '    <string>$(WATCH_PLIST_LABEL)</string>'; \
+	echo '    <key>ProgramArguments</key>'; \
+	echo '    <array>'; \
+	echo '        <string>$(HOME)/.local/bin/nexus</string>'; \
+	echo '        <string>watch</string>'; \
+	echo '    </array>'; \
+	echo '    <key>RunAtLoad</key><true/>'; \
+	echo '    <key>KeepAlive</key><true/>'; \
+	echo '    <key>StandardOutPath</key>'; \
+	echo '    <string>$(WATCH_LOG)</string>'; \
+	echo '    <key>StandardErrorPath</key>'; \
+	echo '    <string>$(WATCH_LOG)</string>'; \
+	echo '    <key>EnvironmentVariables</key>'; \
+	echo '    <dict>'; \
+	echo '        <key>PATH</key>'; \
+	echo '        <string>$(HOME)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>'; \
+	echo '        <key>HOME</key><string>$(HOME)</string>'; \
+	printf '        <key>PG_PASSWORD</key><string>%s</string>\n' "$$PG_PASSWORD"; \
+	echo '        <key>NEXUS_LOG_LEVEL</key><string>warn</string>'; \
+	echo '    </dict>'; \
+	echo '    <key>ThrottleInterval</key><integer>5</integer>'; \
+	echo '</dict>'; \
+	echo '</plist>'; \
+	} > "$(WATCH_PLIST_FILE)"
+	@launchctl bootout gui/$$(id -u)/$(WATCH_PLIST_LABEL) 2>/dev/null || true
+	@launchctl bootstrap gui/$$(id -u) "$(WATCH_PLIST_FILE)"
+	@echo "✅ nexus watch is running in the background"
+	@echo "   Logs:    tail -f $(WATCH_LOG)"
+	@echo "   Restart: make watch-restart  (run after make install to pick up a new binary)"
+	@echo "   Remove:  make watch-uninstall"
+
+watch-uninstall:
+	@launchctl bootout gui/$$(id -u)/$(WATCH_PLIST_LABEL) 2>/dev/null || true
+	@rm -f "$(WATCH_PLIST_FILE)"
+	@echo "✅ nexus watch service removed"
+
+watch-restart:
+	@if [ ! -f "$(WATCH_PLIST_FILE)" ]; then \
+		echo "❌ Service not installed — run 'make watch-install' first."; exit 1; \
+	fi
+	@launchctl bootout gui/$$(id -u)/$(WATCH_PLIST_LABEL) 2>/dev/null || true
+	@launchctl bootstrap gui/$$(id -u) "$(WATCH_PLIST_FILE)"
+	@echo "✅ nexus watch restarted"
+	@echo "   Logs: tail -f $(WATCH_LOG)"
 
 all: lint build

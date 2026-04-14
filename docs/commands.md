@@ -72,23 +72,40 @@ Classified:
 
 ## `nexus watch`
 
-Watches configured directories for new files and automatically runs the `nexus file` pipeline on each one.
+Monitors multiple directory types concurrently. Designed to run as a background service via `make watch-install`.
 
 ```bash
 nexus watch
 ```
 
-Watches `personal.watchDirs` from `config.yaml` (default: `~/Downloads` and `~/Desktop`). Supported file types: `.pdf`, `.md`, `.txt`.
+Four watch modes run in parallel:
 
-nexus waits **3 seconds** after each file event before processing. This settle delay ensures browser downloads and phone transfers have finished writing before the file is read.
+| Mode | Trigger | Action |
+|---|---|---|
+| Personal intake | `personal.watchDirs` — file created/written | Classify → move → ingest (3s settle delay) |
+| Source re-scan | Sources with `watch: true` | Re-ingest new/changed files every 5 minutes |
+| Workspace snapshot | `roots.workspace` — directory created/removed | Regenerate and ingest `dir_structure.md` |
+| Repo detection | `roots.repos[watch: true]` — new directory | Detect newly cloned repositories (10s settle) |
 
-**Example output:**
+Supported personal file types: `.pdf`, `.md`, `.txt`.
+
+**Running as a background service (recommended):**
+
+```bash
+make watch-install     # install as launchd agent, starts at login
+make watch-restart     # reload after make install (new binary)
+make watch-uninstall   # remove the service
+tail -f ~/Library/Logs/nexus-watch.log   # logs
+```
+
+**Example output (foreground):**
 
 ```
-  Watching 2 director(ies). Press Ctrl+C to stop.
+  Watching 4 director(ies), 2 source ticker(s). Press Ctrl+C to stop.
 
   → Detected: rabobank-march-2026.pdf
   ✓ Filed [bank_statement/nl]: 2026-03_Rabobank_Bank_Statement.pdf
+  ✓ Workspace snapshot updated: ~/ops-nexus/dir_structure.md
 ```
 
 ---
