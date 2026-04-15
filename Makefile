@@ -128,7 +128,13 @@ setup:
 	# PostgreSQL
 	@echo "1. Starting PostgreSQL (TCP mode)..."
 	@brew services start postgresql@14 || true
-	@sleep 3
+	@echo "   Waiting for PostgreSQL to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		pg_isready -h localhost -p 5432 -q && break; \
+		echo "   ($$i/10) not ready yet, retrying in 2s..."; \
+		sleep 2; \
+	done; \
+	pg_isready -h localhost -p 5432 -q || { echo "❌ PostgreSQL did not start. Check: brew services info postgresql@14"; exit 1; }
 
 	@echo "2. Resolving database password..."
 	@if command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1; then \
@@ -182,7 +188,12 @@ setup:
 	@echo "6. Installing pgvector..."
 	@brew install pgvector || true
 	@brew services restart postgresql@14
-	@sleep 3
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		pg_isready -h localhost -p 5432 -q && break; \
+		echo "   ($$i/10) not ready yet, retrying in 2s..."; \
+		sleep 2; \
+	done; \
+	pg_isready -h localhost -p 5432 -q || { echo "❌ PostgreSQL did not restart. Check: brew services info postgresql@14"; exit 1; }
 
 	# Ollama models (ollama pull is idempotent — skips if already downloaded)
 	@echo "7. Pulling Ollama models (skipped if already present)..."
