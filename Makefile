@@ -160,10 +160,10 @@ setup:
 	echo "$$PASSWORD" > .pgpassword; \
 	USER=$$(whoami); \
 	echo "   Creating vaultuser role and opsnexus database..."; \
-	psql -U $$USER postgres -c \
+	psql -h localhost -U $$USER postgres -c \
 		"CREATE ROLE vaultuser WITH LOGIN PASSWORD '$$PASSWORD' CREATEDB;" \
 		2>/dev/null || echo "   Role already exists — skipping"; \
-	createdb -U $$USER -O vaultuser opsnexus 2>/dev/null || echo "   Database already exists — skipping"
+	createdb -h localhost -U $$USER -O vaultuser opsnexus 2>/dev/null || echo "   Database already exists — skipping"
 
 	@USER=$$(whoami); \
 	echo "3. Creating vector extension as superuser..."; \
@@ -274,7 +274,7 @@ setup:
 		echo "" >> config.yaml; \
 		echo "postgres:" >> config.yaml; \
 		echo '  dsn: "postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> config.yaml; \
-		GEN_MODEL=$$(cat .ollama_gen_model 2>/dev/null || echo "llama3.1:8b"); \
+		GEN_MODEL=$$(cat .ollama_gen_model 2>/dev/null || echo "llama3.2:3b"); \
 		echo "ollama:" >> config.yaml; \
 		echo "  baseURL: http://localhost:11434" >> config.yaml; \
 		echo "  embeddingModel: mxbai-embed-large" >> config.yaml; \
@@ -343,7 +343,7 @@ setup:
 	@echo "Next steps:"
 	@echo "   make ingest                                         # ingest your documents (skips unchanged files)"
 	@echo "   make query question=\"What is the staging area in Git?\""
-	@echo "   make query question=\"...\" model=llama3.1:8b        # use a different model"
+	@echo "   make query question=\"...\" model=llama3.2:3b        # use a different model"
 	@echo "   nexus watch                                         # auto-file new documents from ~/Downloads"
 	@echo ""
 	@echo "To reset ingested data (e.g. after changing embedding model): make reset-db"
@@ -376,7 +376,7 @@ ingest:
 
 query:
 	@if [ -z "$(question)" ]; then \
-		echo "Usage: make query question=\"Your question here\" [source=progit] [model=llama3.1:8b]"; \
+		echo "Usage: make query question=\"Your question here\" [source=progit] [model=llama3.2:3b]"; \
 		exit 1; \
 	fi
 	@FLAGS=""; \
@@ -420,7 +420,7 @@ cleanup:
 	@echo "Removing Ollama models..."
 	@ollama rm mxbai-embed-large 2>/dev/null || true
 	@ollama rm qwen2.5:7b 2>/dev/null || true
-	@ollama rm llama3.1:8b 2>/dev/null || true
+	@ollama rm llama3.2:3b 2>/dev/null || true
 
 	@echo "✅ Cleanup complete. You can now run 'make setup' for a fresh start."
 
