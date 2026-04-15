@@ -14,7 +14,7 @@ help:
 	@echo "  make ingest force=1                → Force re-ingest (ignore dedup)"
 	@echo "  make query question=\"...\"                      → Ask a question against the knowledge base"
 	@echo "  make query question=\"...\" source=progit         → Restrict to one source"
-	@echo "  make query question=\"...\" model=llama3.1:8b     → Use a specific generation model"
+	@echo "  make query question=\"...\" model=llama3.2:3b     → Use a specific generation model"
 	@echo "  make layout file=<pdf>             → Pipeline summary for a PDF"
 	@echo "  make layout file=<pdf> flags=\"--chunks --page-from 1 --page-to 10\""
 	@echo "  make watch-install                 → Install nexus watch as a launchd background service"
@@ -197,13 +197,13 @@ setup:
 
 	# Ollama models (ollama pull is idempotent — skips if already downloaded)
 	@echo "7. Pulling Ollama models (skipped if already present)..."
-	@echo "   Embedding model — mxbai-embed-large (multilingual, 1024 dims)..."
+	@echo "   Embedding model — mxbai-embed-large (multilingual, 1024 dims, ~670MB)..."
 	@ollama pull mxbai-embed-large
-	@echo "   Classification model — qwen2.5:7b (structured JSON output)..."
-	@ollama pull qwen2.5:7b
-	@echo "   Generation model — llama3.1:8b (query answers)..."
-	@ollama pull llama3.1:8b
-	@echo "llama3.1:8b" > .ollama_gen_model
+	@echo "   Classification model — qwen2.5:3b (structured JSON output, ~1.9GB)..."
+	@ollama pull qwen2.5:3b
+	@echo "   Generation model — llama3.2:3b (query answers, ~2.0GB)..."
+	@ollama pull llama3.2:3b
+	@echo "llama3.2:3b" > .ollama_gen_model
 
 	# Personal docs directory (mkdir -p is idempotent)
 	@echo "8. Creating PersonalDocs directory structure..."
@@ -279,7 +279,7 @@ setup:
 		echo "  baseURL: http://localhost:11434" >> config.yaml; \
 		echo "  embeddingModel: mxbai-embed-large" >> config.yaml; \
 		echo "  generationModel: $$GEN_MODEL" >> config.yaml; \
-		echo "  classificationModel: qwen2.5:7b" >> config.yaml; \
+		echo "  classificationModel: qwen2.5:3b" >> config.yaml; \
 		echo "personal:" >> config.yaml; \
 		echo "  watchDirs:" >> config.yaml; \
 		echo "    - ~/Downloads" >> config.yaml; \

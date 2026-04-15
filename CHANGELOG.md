@@ -45,6 +45,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Prompts for ops-notes exclude patterns and optional runbooks source
 - Prompts for workspace root, work repos path and host substrings, personal GitHub and GitLab repos and usernames
 
+**Model size reduction**
+- Default generation model: `llama3.1:8b` → `llama3.2:3b` (~4.7GB → ~2.0GB)
+- Default classification model: `qwen2.5:7b` → `qwen2.5:3b` (~4.7GB → ~1.9GB)
+- Embedding model unchanged: `mxbai-embed-large` (~670MB) — dimension (1024) is baked into the DB schema
+- Total download reduced from ~10GB to ~4.6GB
+
 ---
 
 ## [v0.0.1] — 2026-04-10
