@@ -15,6 +15,7 @@ import (
 	"github.com/iamaina/nexus/internal/config"
 	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/models"
 	"github.com/iamaina/nexus/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -209,7 +210,7 @@ Press Ctrl+C to stop watching.`,
 					}
 					rootName := repoRootNames[parentDir]
 					debounce(&mu, pending, event.Name, repoSettleDelay, func(path string) {
-						checkNewRepo(context.Background(), rootName, path)
+						checkNewRepo(context.Background(), a, rootName, path)
 					})
 				}
 
@@ -281,18 +282,35 @@ func regenerateWorkspaceSnapshot(ctx context.Context, a *app.Application, worksp
 	fmt.Printf("  ✓ Workspace snapshot updated: %s\n", outPath)
 }
 
-// checkNewRepo checks if path is a newly cloned git repo and logs it.
-// This is a Phase 4 prep hook — DB registration will be added later.
-func checkNewRepo(ctx context.Context, rootName, path string) {
+// checkNewRepo checks if path is a newly cloned git repo, logs it, and
+// registers it in the database via the Repos model.
+func checkNewRepo(ctx context.Context, a *app.Application, rootName, path string) {
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
 		return
 	}
-	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-		logger.Info(ctx, "repo.detected",
-			slog.String("root", rootName),
-			slog.String("path", path))
-		fmt.Printf("  → New repo detected in %s: %s\n", rootName, filepath.Base(path))
+	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+		return
+	}
+
+	logger.Info(ctx, "repo.detected",
+		slog.String("root", rootName),
+		slog.String("path", path))
+	fmt.Printf("  → New repo detected in %s: %s\n", rootName, filepath.Base(path))
+
+	// Register in DB so nexus repo check can find it immediately.
+	remote := repoNormaliseRemote(repoGitRun(ctx, path, "remote", "get-url", "origin"))
+	repoType := repoTypeFromName(rootName)
+	if err := a.Repos.Upsert(ctx, models.Repo{
+		Path:      path,
+		RemoteURL: remote,
+		Platform:  detectPlatform(remote),
+		RepoType:  repoType,
+		RootName:  rootName,
+	}); err != nil {
+		logger.Warn(ctx, "repo.register_failed",
+			slog.String("path", path),
+			slog.Any("err", err))
 	}
 }
 

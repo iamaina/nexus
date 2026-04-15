@@ -45,6 +45,7 @@ type Application struct {
 	Documents      *models.DocumentModel
 	Chunks         *models.ChunkModel
 	ContextSources *models.ContextModel
+	Repos          *models.RepoModel
 	Embedder       Embedder
 	Summarizer     *summarizer.OllamaSummarizer
 	Classifier     DocumentClassifier
@@ -134,6 +135,7 @@ func New(verbose bool) (*Application, error) {
 		Documents:      &models.DocumentModel{DB: db},
 		Chunks:         &models.ChunkModel{DB: db},
 		ContextSources: &models.ContextModel{DB: db},
+		Repos:          &models.RepoModel{DB: db},
 		Embedder:       emb,
 		Summarizer:     sum,
 		Classifier:     clf,
@@ -185,6 +187,15 @@ func migrate(ctx context.Context, db *pgx.Conn) error {
 			command     TEXT NOT NULL,
 			description TEXT,
 			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS repos (
+			id         BIGSERIAL PRIMARY KEY,
+			path       TEXT UNIQUE NOT NULL,
+			remote_url TEXT NOT NULL,
+			platform   TEXT NOT NULL DEFAULT '',
+			repo_type  TEXT NOT NULL DEFAULT '',
+			root_name  TEXT NOT NULL DEFAULT '',
+			last_seen  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 	}
 

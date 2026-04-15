@@ -32,6 +32,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Mode 3 — Workspace OS (Phase 4)**
+- `nexus repo scan` — walks all configured repo roots, discovers git repositories, and upserts them into a new `repos` table; run once after setup, then `nexus watch` keeps it current
+- `nexus repo list` — lists all registered repositories grouped by root with live branch and dirty status
+- `nexus repo check <url>` — finds an existing clone (DB lookup → workspace fallback scan → auto-register) or infers a placement from existing repo patterns and offers to clone; handles URL namespace mismatches with a corrective suggestion
+- Pattern inference uses substring org matching so nested GitLab namespaces (e.g. `gitlab-com/gl-infra/*`) map correctly to their top-level subdirectory (`infrastructure/`)
+- `nexus watch` wires `checkNewRepo` to upsert newly detected repos into the DB immediately on clone
+- `config.FindRepoRoot` — exported method for most-specific-wins host+group routing, shared by `nexus repo check` and `nexus watch`
+- `repos` table migration added to auto-migration sequence in `app.go`
+
 **`make setup` additions**
 - Prompts for ops-notes exclude patterns and optional runbooks source
 - Prompts for workspace root, work repos path and host substrings, personal GitHub and GitLab repos and usernames

@@ -130,3 +130,35 @@ func (c *Config) resolve() error {
 
 	return nil
 }
+
+// FindRepoRoot returns the best-matching RepoRoot for a normalised remote URL
+// using most-specific-wins: host+group match beats host-only match.
+// Returns nil if no root matches.
+func (c *Config) FindRepoRoot(normalisedURL string) *RepoRoot {
+	lower := strings.ToLower(normalisedURL)
+	var best *RepoRoot
+	bestScore := 0
+
+	for i := range c.Roots.Repos {
+		r := &c.Roots.Repos[i]
+		score := 0
+		for _, host := range r.Hosts {
+			if strings.Contains(lower, strings.ToLower(host)) {
+				score++
+			}
+		}
+		if score == 0 {
+			continue
+		}
+		for _, group := range r.Groups {
+			if strings.Contains(lower, strings.ToLower(group)) {
+				score += 10 // group match decisively wins
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			best = r
+		}
+	}
+	return best
+}

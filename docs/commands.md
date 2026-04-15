@@ -305,6 +305,66 @@ nexus layout --fonts mybook.pdf
 
 ---
 
+## `nexus repo`
+
+Manage and locate git repositories across your workspace.
+
+### `nexus repo scan`
+
+Walks all configured `roots.repos` directories, discovers git repositories, and registers them in the nexus database. Run once after setup; `nexus watch` keeps the database current as new repos are cloned.
+
+```bash
+nexus repo scan
+```
+
+### `nexus repo list`
+
+Lists all registered repositories grouped by root, with live branch and dirty status.
+
+```bash
+nexus repo list
+```
+
+### `nexus repo check <url>`
+
+Finds an existing clone or suggests where to put a new one.
+
+```bash
+nexus repo check git@gitlab.com:gl-infra/delivery.git
+nexus repo check https://github.com/iamaina/nexus.git
+```
+
+**Lookup order:**
+1. DB lookup by normalised remote URL (instant)
+2. Workspace root scan if not found in DB (auto-registers on match)
+3. Pattern inference from existing repos in the matching root
+
+**If found:**
+```
+  ✅  ~/ops-nexus/active-ops/gitlab-work/infrastructure/delivery
+      Branch: main  |  clean
+      Last commit: fix(ci): update pipeline config (2 days ago)
+```
+
+**If not found — suggests placement:**
+```
+  ❌  gitlab.com/gl-infra/delivery not found in any registered root.
+
+  Suggested location (work root):
+    ~/ops-nexus/active-ops/gitlab-work/infrastructure/delivery  [inferred from gl-infra/* pattern]
+
+  Clone here? [Y/n]
+```
+
+**If a different repo exists at the suggested path:**
+```
+  ⚠️   A different repository already exists at that path:
+      remote: gitlab.com/gitlab-com/gl-infra/delivery
+  Did you mean: nexus repo check git@gitlab.com:gitlab-com/gl-infra/delivery.git ?
+```
+
+---
+
 ## `nexus version`
 
 Prints the binary version.
