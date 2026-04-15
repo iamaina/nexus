@@ -42,6 +42,8 @@ const (
 	actionRepoRoot                        // detect new .git dirs (Phase 4 prep)
 )
 
+var watchList bool
+
 var watchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "Automatically organise, index, and monitor your workspace",
@@ -59,6 +61,11 @@ Press Ctrl+C to stop watching.`,
 		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
 			logger.Error(ctx, "Application not found in context")
+			return
+		}
+
+		if watchList {
+			printWatchList(a)
 			return
 		}
 
@@ -368,6 +375,57 @@ func scanSource(ctx context.Context, a *app.Application, src config.Source) {
 	}
 }
 
+// printWatchList shows what nexus watch would monitor without starting.
+func printWatchList(a *app.Application) {
+	home, _ := os.UserHomeDir()
+	display := func(p string) string { return strings.Replace(p, home, "~", 1) }
+
+	fmt.Println()
+	fmt.Println("  nexus watch — configured watchers")
+	fmt.Println()
+
+	fmt.Println("  Personal intake (classify → file → ingest on new file):")
+	for _, d := range a.Config.Personal.WatchDirs {
+		fmt.Printf("    %s\n", display(d))
+	}
+
+	fmt.Println()
+	fmt.Println("  Source tickers (re-ingest on change, every 5 min):")
+	tickers := 0
+	for _, src := range a.Config.Sources {
+		if src.Watch {
+			fmt.Printf("    %-20s  %s\n", src.Name, display(src.Path))
+			tickers++
+		}
+	}
+	if tickers == 0 {
+		fmt.Println("    (none — set watch: true on a source to enable)")
+	}
+
+	fmt.Println()
+	fmt.Println("  Workspace snapshot (regenerate dir_structure.md on structural change):")
+	if ws := a.Config.Roots.Workspace; ws != "" {
+		fmt.Printf("    %s\n", display(ws))
+	} else {
+		fmt.Println("    (none — set roots.workspace in config to enable)")
+	}
+
+	fmt.Println()
+	fmt.Println("  Repo roots (detect newly cloned repos):")
+	repoWatches := 0
+	for _, r := range a.Config.Roots.Repos {
+		if r.Watch {
+			fmt.Printf("    %-20s  %s\n", r.Name, display(r.Path))
+			repoWatches++
+		}
+	}
+	if repoWatches == 0 {
+		fmt.Println("    (none — set watch: true on a repo root to enable)")
+	}
+	fmt.Println()
+}
+
 func init() {
+	watchCmd.Flags().BoolVar(&watchList, "list", false, "print configured watchers without starting")
 	RootCmd.AddCommand(watchCmd)
 }

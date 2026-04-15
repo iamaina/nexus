@@ -36,36 +36,51 @@ nexus ingest --force
 
 ---
 
-## `nexus file`
+## `nexus organise`
 
-Classifies a single document, moves it to the appropriate subdirectory of `PersonalDocs`, and ingests it.
+Classifies documents, shows a plan of where each file will go, and moves + ingests on confirmation. Replaces `nexus file`.
 
 ```bash
-nexus file ~/Downloads/statement.pdf
-nexus file ~/Downloads/statement.pdf --dry-run
+nexus organise                                      # process all personal.watchDirs
+nexus organise ~/Downloads                          # process a directory
+nexus organise ~/Downloads/invoice.pdf              # process a single file
+nexus organise --dry-run ~/Downloads                # show plan without moving anything
 ```
 
 **Flags:**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--dry-run` | false | Classify and print the result without moving or ingesting the file |
+| `--dry-run` | false | Show the plan without moving or ingesting |
+| `--force` / `-f` | false | Re-ingest even if file content is unchanged |
 
-**What "classify" means:** nexus extracts the first ~1200 characters of readable text from the document, sends it to `qwen2.5:7b` with a structured prompt, and parses the response to get: document type, language, institution, date, suggested filename, and destination folder inside PersonalDocs.
+**How path resolution works:**
+
+- If the argument is a **file** → single-file mode
+- If the argument is a **directory** → batch mode, all supported files (`.pdf`, `.md`, `.txt`) inside it
+- If **no argument** → batch mode on all `personal.watchDirs`
+
+**Routing:**
+
+- `book` and `article` types search configured source directories for an existing directory matching the document topic; if none found, suggests a new directory under the first source root
+- All other types route to `PersonalDocs/{dest_dir}/` as classified by the LLM
 
 **Example output:**
 
 ```
-Classified:
-  Type:        invoice
-  Language:    en
-  Institution: Canva
-  Date:        2026-03
-  Destination: ~/Documents/PersonalDocs/finance/invoices/2026-03_Canva_Invoice.pdf
+  Classifying 3 file(s)...
 
-→ Moving file...
-→ Ingesting...
-✓ Done
+  Classifying invoice-april-2026.pdf ...
+  Classifying kubernetes-handbook.pdf ...
+  Classifying bank-statement.pdf ...
+
+  Plan for ~/Downloads (3 file(s)):
+
+    invoice-april-2026.pdf    →  ~/Documents/PersonalDocs/finance/invoices/2026-04_Canva_Invoice.pdf              [existing]
+    kubernetes-handbook.pdf   →  ~/ops-nexus/intelligence/learnings/Kubernetes/Kubernetes_In_Action.pdf           [existing]
+    bank-statement.pdf        →  ~/Documents/PersonalDocs/finance/bank-statements/2026-03_ABNAMRO_Statement.pdf   [new dir] 
+
+  Apply? [Y/n]
 ```
 
 ---
@@ -88,6 +103,12 @@ Four watch modes run in parallel:
 | Repo detection | `roots.repos[watch: true]` — new directory | Detect newly cloned repositories (10s settle) |
 
 Supported personal file types: `.pdf`, `.md`, `.txt`.
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--list` | false | Print all configured watchers without starting |
 
 **Running as a background service (recommended):**
 

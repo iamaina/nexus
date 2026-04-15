@@ -23,6 +23,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ListChaptersByDocumentID`: fall through to level+1 when only one chapter at minimum level — fixes documents showing a single title-level chapter
 - `ChunkModel.Store`: delete existing chunks before insert — prevents stale chunks when re-ingesting a document with fewer chunks
 
+**Mode 3 — Workspace OS (Phase 3)**
+- `nexus organise [path]` — replaces `nexus file`; auto-detects file vs directory from argument; no argument processes all `personal.watchDirs`
+- Classifies each file, resolves destination, prints a full plan before touching anything, confirms before executing
+- `--dry-run` shows plan without moving or ingesting; `--force` / `-f` re-ingests unchanged files
+- `internal/organiser` package: topic-based directory matcher walks source roots to find existing dirs for technical docs (`book`, `article`); all other types route to PersonalDocs with path-traversal sanitisation
+- `nexus watch --list` — prints all configured watchers (personal intake dirs, source tickers, workspace root, repo roots) without starting
+- `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
+- `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
+
 **`make setup` additions**
 - Prompts for ops-notes exclude patterns and optional runbooks source
 - Prompts for workspace root, work repos path and host substrings, personal GitHub and GitLab repos and usernames
