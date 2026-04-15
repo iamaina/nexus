@@ -52,7 +52,7 @@ bootstrap:
 
 	@# Python env for PDF extraction (uses mise-managed Python)
 	@echo "Setting up Python environment for PDF extraction..."
-	@mise exec -- python -m venv .venv
+	@mise exec -- python3 -m venv .venv
 	@.venv/bin/pip install --quiet pymupdf
 	@echo "✅ Python environment ready (.venv)"
 
@@ -61,7 +61,7 @@ bootstrap:
 
 setup-python:
 	@echo "=== Setting up Python environment for PDF extraction ==="
-	@python -m venv .venv
+	@python3 -m venv .venv
 	@.venv/bin/pip install pymupdf
 	@echo "✅ Python environment ready for PDF extraction"
 
@@ -99,7 +99,7 @@ setup:
 	fi
 
 	# Python environment for PDF extraction
-	@python -m venv .venv
+	@python3 -m venv .venv
 	@.venv/bin/pip install --quiet pymupdf
 	@echo "✅ Python environment ready"
 
