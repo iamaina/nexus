@@ -1,4 +1,4 @@
-name: Auto-tag on merge to master
+name: Auto-tag and create stable branch on merge to master
 
 on:
   push:
@@ -69,3 +69,66 @@ jobs:
             -m "${{ steps.next.outputs.tag }} — ${{ steps.commit.outputs.message }}"
           git push origin "${{ steps.next.outputs.tag }}"
           echo "✅ Tagged ${{ steps.next.outputs.tag }}"
+
+      # Create the next stable working branch in the same job.
+      #
+      # Why not a separate workflow triggered by the tag push?
+      # GitHub suppresses workflow-to-workflow triggers when the event is caused
+      # by GITHUB_TOKEN (security feature to prevent infinite loops). A tag pushed
+      # by this workflow would never fire a downstream "on: push: tags:" workflow.
+      # Doing it here, in the same job, is the only reliable approach.
+      - name: Calculate next stable branch name
+        id: branch
+        if: steps.next.outputs.tag != ''
+        run: |
+          tag="${{ steps.next.outputs.tag }}"
+          version="${tag#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+          next_minor=$((minor + 1))
+          branch_name="stable/v${major}.${next_minor}.0"
+          echo "name=$branch_name" >> $GITHUB_OUTPUT
+          echo "Next stable branch: $branch_name"
+
+      - name: Create stable branch from master
+        if: steps.next.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="${{ steps.branch.outputs.name }}"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            echo "Branch $branch already exists — skipping"
+          else
+            git checkout -b "$branch"
+            git push origin "$branch"
+            echo "✅ Created $branch"
+          fi
+
+      - name: Protect stable branch (best-effort — requires GitHub Pro/Team)
+        if: steps.next.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="${{ steps.branch.outputs.name }}"
+          encoded="${branch//\//%2F}"
+          repo="${{ github.repository }}"
+
+          gh api \
+            --method PUT \
+            "repos/${repo}/branches/${encoded}/protection" \
+            --field required_status_checks='{"strict":true,"contexts":["golangci-lint"]}' \
+            --field enforce_admins=false \
+            --field required_pull_request_reviews='{"required_approving_review_count":0,"dismiss_stale_reviews":false}' \
+            --field restrictions=null \
+            --field allow_force_pushes=false \
+            --field allow_deletions=false \
+            && echo "✅ Protected $branch" \
+            || echo "⚠️  Branch protection skipped (requires GitHub Pro/Team — set manually in repo settings)"
+
+      - name: Summary
+        if: steps.next.outputs.tag != ''
+        run: |
+          echo "### Release ${{ steps.next.outputs.tag }} complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Tagged: \`${{ steps.next.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Next working branch: \`${{ steps.branch.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Switch to it: \`git fetch origin && git checkout ${{ steps.branch.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
