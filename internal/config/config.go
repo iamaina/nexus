@@ -14,6 +14,7 @@ type Source struct {
 	Path       string   `yaml:"path"`
 	Extensions []string `yaml:"extensions"`
 	Exclude    []string `yaml:"exclude"` // path substrings to skip (directories or files)
+	Watch      bool     `yaml:"watch"`   // if true, nexus watch re-ingests files on change
 }
 
 // Personal holds configuration for the personal document safe (Mode 1).
@@ -22,10 +23,46 @@ type Personal struct {
 	DestDir   string   `yaml:"destDir"`
 }
 
+// RepoRoot describes a directory where git repositories are cloned.
+// nexus uses it to locate existing clones and suggest placement for new ones.
+//
+// Matching uses most-specific-wins:
+//   - A root with matching host AND matching group wins over host-only.
+//   - Personal roots carry your username as the group (e.g. "amaina", "iamaina").
+//   - Work roots have no groups — they catch everything the personal roots don't claim.
+//
+// Example: gitlab.com/amaina/my-project → personal-gitlab (host+group match)
+//
+//	gitlab.com/gl-infra/delivery  → work           (host-only, personal doesn't match)
+type RepoRoot struct {
+	Name   string   `yaml:"name"`   // e.g. "work", "personal-github", "personal-gitlab"
+	Path   string   `yaml:"path"`   // absolute or ~ path to the root directory
+	Hosts  []string `yaml:"hosts"`  // git host substrings — "gitlab" matches all gitlab-based hosts
+	Groups []string `yaml:"groups"` // personal namespace(s) only — omit on work roots to act as fallback
+	Watch  bool     `yaml:"watch"`  // if true, nexus watch registers new .git dirs automatically
+}
+
+// Roots holds the workspace OS configuration (Mode 3).
+// All fields are optional — omitting this section changes no existing behaviour.
+type Roots struct {
+	Workspace string     `yaml:"workspace"` // top-level workspace directory to watch for structural changes
+	Repos     []RepoRoot `yaml:"repos"`     // repo roots by type and platform
+}
+
+// GdocConfig holds Google Docs integration settings.
+// All fields are optional — omit the section entirely to disable Google Docs support.
+type GdocConfig struct {
+	CredentialsPath string `yaml:"credentialsPath"` // path to Google OAuth credentials.json (from Google Cloud Console)
+	TokenPath       string `yaml:"tokenPath"`       // token cache — defaults to ~/.config/nexus/gdoc_token.json
+	SyncDir         string `yaml:"syncDir"`         // where fetched docs are saved as .md files
+}
+
 // Config is the fully resolved application configuration.
 type Config struct {
-	Sources  []Source `yaml:"sources"`
-	Personal Personal `yaml:"personal"`
+	Sources  []Source   `yaml:"sources"`
+	Personal Personal   `yaml:"personal"`
+	Roots    Roots      `yaml:"roots"` // workspace OS layer — optional, safe to omit
+	Gdoc     GdocConfig `yaml:"gdoc"`  // Google Docs integration — optional, safe to omit
 	Postgres struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"postgres"`
@@ -92,8 +129,49 @@ func (c *Config) resolve() error {
 		c.Personal.WatchDirs[i] = expandHome(d)
 	}
 
+	c.Roots.Workspace = expandHome(c.Roots.Workspace)
+	for i := range c.Roots.Repos {
+		c.Roots.Repos[i].Path = expandHome(c.Roots.Repos[i].Path)
+	}
+
+	c.Gdoc.CredentialsPath = expandHome(c.Gdoc.CredentialsPath)
+	c.Gdoc.TokenPath = expandHome(c.Gdoc.TokenPath)
+	c.Gdoc.SyncDir = expandHome(c.Gdoc.SyncDir)
+
 	password := os.Getenv("PG_PASSWORD")
 	c.Postgres.DSN = strings.ReplaceAll(c.Postgres.DSN, "${PG_PASSWORD}", password)
 
 	return nil
+}
+
+// FindRepoRoot returns the best-matching RepoRoot for a normalised remote URL
+// using most-specific-wins: host+group match beats host-only match.
+// Returns nil if no root matches.
+func (c *Config) FindRepoRoot(normalisedURL string) *RepoRoot {
+	lower := strings.ToLower(normalisedURL)
+	var best *RepoRoot
+	bestScore := 0
+
+	for i := range c.Roots.Repos {
+		r := &c.Roots.Repos[i]
+		score := 0
+		for _, host := range r.Hosts {
+			if strings.Contains(lower, strings.ToLower(host)) {
+				score++
+			}
+		}
+		if score == 0 {
+			continue
+		}
+		for _, group := range r.Groups {
+			if strings.Contains(lower, strings.ToLower(group)) {
+				score += 10 // group match decisively wins
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			best = r
+		}
+	}
+	return best
 }

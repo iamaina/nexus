@@ -7,35 +7,46 @@ import (
 
 // AnalyzeFonts returns the body font size and a frequency map of all font sizes found in lines.
 func AnalyzeFonts(lines []Line) (float64, map[float64]int) {
+	// freq counts all non-code lines — used by BuildFontLevels to find heading candidates.
 	freq := make(map[float64]int)
+	// bodyFreq counts only non-bold, non-code lines — used to detect body font.
+	// Excluding bold prevents code-heavy docs (where bold headings outnumber body text)
+	// from misidentifying a heading size as the body font.
+	bodyFreq := make(map[float64]int)
 
 	for _, l := range lines {
-		// skip code fonts
-		if strings.Contains(l.FontName, "Mono") ||
-			strings.Contains(l.FontName, "Courier") {
+		isCode := strings.Contains(l.FontName, "Mono") ||
+			strings.Contains(l.FontName, "Courier")
+		isBold := strings.Contains(strings.ToLower(l.FontName), "bold")
+
+		if isCode {
 			continue
 		}
 		freq[l.FontSize]++
+		if !isBold {
+			bodyFreq[l.FontSize]++
+		}
 	}
 
-	// DEBUG: print distribution
-	// fmt.Println("\n--- Font Distribution ---")
-	// for fs, count := range freq {
-	// 	fmt.Printf("fs=%.2f → %d\n", fs, count)
-	// }
-
-	// find most frequent font (body)
+	// Find body font from non-bold lines first.
 	var body float64
 	maxCount := 0
-
-	for fs, count := range freq {
+	for fs, count := range bodyFreq {
 		if count > maxCount {
 			maxCount = count
 			body = fs
 		}
 	}
 
-	// fmt.Printf("\nDetected Body Font: %.2f\n", body)
+	// Fallback: if all non-code lines are bold (e.g. heading-only doc), use full freq.
+	if body == 0 {
+		for fs, count := range freq {
+			if count > maxCount {
+				maxCount = count
+				body = fs
+			}
+		}
+	}
 
 	return body, freq
 }

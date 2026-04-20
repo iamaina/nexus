@@ -12,6 +12,7 @@ import (
 var cfgFile string
 var verbose bool
 var showVersion bool
+var resumeSession string
 
 // Verbose reports whether --verbose / -v was passed on the command line.
 func Verbose() bool { return verbose }
@@ -57,15 +58,24 @@ func resolveVersion() string {
 // Version is handled manually via -V/--version so that -v is free for --verbose.
 var RootCmd = &cobra.Command{
 	Use:   "nexus",
-	Short: "Ask questions, get answers from your own documents and infrastructure",
-	Long: `nexus — ask questions, get answers from your own sources.
+	Short: "Your local workspace intelligence — chat, search, and organise",
+	Long: `nexus — your local workspace intelligence layer.
 
-  Ask anything in plain English. nexus searches across:
-    • Your technical books, notes, and documentation
-    • Your personal files — contracts, invoices, insurance, anything you have stored
-    • Your live infrastructure — Kubernetes, Terraform, Prometheus, and more
+  Running nexus with no subcommand starts an interactive chat session.
+  Ask anything in plain English across your documents, notes, and live infrastructure.
+  Every answer is cited so you know exactly which source it came from.
 
-  Every answer is cited so you know exactly which document it came from.
+  Sessions are saved to ~/.config/nexus/chats/ and can be resumed:
+
+    nexus                                         start a new session
+    nexus --resume 2026-04-20_14-32_praefect      continue a saved session
+
+  Chat flags:
+
+    --model string      override the generation model for this session
+    --no-live           skip live context sources (kubectl, terraform, etc.)
+    --source string     restrict search to one source or filename fragment
+    --threshold float   minimum similarity score to include a chunk (default 0.70)
 
   Runs entirely on your own infrastructure. No cloud. No API keys. No subscriptions.
   Your data stays under your control — no third party ever sees what you ask or store.`,
@@ -74,7 +84,7 @@ var RootCmd = &cobra.Command{
 			fmt.Printf("nexus %s\n", Version)
 			return nil
 		}
-		return cmd.Help()
+		return runChatSession(cmd, resumeSession)
 	},
 }
 
@@ -91,4 +101,8 @@ func init() {
 	RootCmd.PersistentFlags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold for query results (overrides config)")
 	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "show connection and pipeline logs (INFO level)")
 	RootCmd.Flags().BoolVarP(&showVersion, "version", "V", false, "show version information")
+	RootCmd.Flags().StringVar(&resumeSession, "resume", "", "continue a saved chat session")
+	_ = RootCmd.RegisterFlagCompletionFunc("resume", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return chatSessionNames()
+	})
 }

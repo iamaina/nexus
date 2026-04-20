@@ -109,23 +109,24 @@ Common issues:
 
 ---
 
-## How it works in a query
+## How it works
 
-When you run `nexus query "..."`:
+Live context runs automatically in both the chat interface (`nexus`) and the one-shot command (`nexus query`):
 
 1. The question is embedded and a vector search runs (same as always)
 2. All registered context sources run **concurrently** with a **5-second timeout** per command
 3. Successful outputs are injected into the prompt as `[live:name]` sections
-4. Failed commands are logged as warnings but do not block the query — you still get an answer from static sources
+4. Failed commands are logged as warnings but do not block the answer — you still get a response from static sources
 5. The LLM sees live context first, then static chunks
 6. The LLM is instructed to prefer live data over static when they conflict
 
-The 5-second timeout is per-command but all commands run in parallel. A query with 3 registered sources waits at most 5 seconds total for live context (not 15).
+The 5-second timeout is per-command but all commands run in parallel. Three registered sources wait at most 5 seconds total (not 15).
 
 ### Skipping live context
 
 ```bash
-nexus query "..." --no-live
+nexus --no-live                  # skip in chat
+nexus query "..." --no-live      # skip for a one-off query
 ```
 
 Use this when:

@@ -98,41 +98,50 @@ NEXUS_LOG_LEVEL=debug make ingest
 
 ---
 
-## Your first query
+## Your first question
 
 ```bash
-nexus query "What is the staging area in Git?"
+nexus
+```
+
+This starts an interactive chat session. Type any question in plain English and press Enter:
+
+```
+❯ What is the staging area in Git?
 ```
 
 nexus will:
 1. Embed your question (same model as the document chunks)
 2. Find the 15 most similar chunks in the database
 3. Filter out anything below the relevance threshold (default 0.70)
-4. Generate a cited answer using `llama3.1:8b`
-5. Print the answer with source file names
+4. Stream a cited answer using `llama3.1:8b`
+5. Show source file names and "Open to read more:" paths
 
-Example output:
+Sessions are saved to `~/.config/nexus/chats/` automatically. Resume a session with:
 
+```bash
+nexus --resume 2026-04-20_14-32_what-is-staging
 ```
-🔍 Query: What is the staging area in Git?
 
-  📄 progit — Basic Snapshotting
+Type `exit` or press `Ctrl+C` to end.
 
-Answer:
+### One-off questions (non-interactive)
 
-According to [1] progit — Basic Snapshotting, the staging area (also called
-the "index") is a file that stores information about what will go into your
-next commit. When you run `git add`, you are staging changes — moving them
-from your working tree into the staging area. Running `git commit` then takes
-everything in the staging area and creates a permanent snapshot.
+For scripting or piping, use `nexus query` instead:
+
+```bash
+nexus query "What is the staging area in Git?"
 ```
+
+This runs once and exits — no session, no history, same search and answer pipeline.
 
 ### Tuning the threshold
 
 If you get "No sufficiently relevant information found":
 
 ```bash
-nexus query "..." --threshold 0.5   # lower = more results, less precise
+nexus --threshold 0.5            # lower = more results, less precise (chat)
+nexus query "..." --threshold 0.5   # same for one-off queries
 ```
 
 nexus will show the best score it found so you can pick a sensible threshold.
@@ -140,8 +149,8 @@ nexus will show the best score it found so you can pick a sensible threshold.
 ### Restricting to a source
 
 ```bash
-nexus query "..." --source books       # only search documents from the "books" source
-nexus query "..." --source personal    # only search personal documents
+nexus --source books             # only search documents from the "books" source
+nexus query "..." --source books    # same for one-off queries
 ```
 
 Source names match the `name:` field in `config.yaml`.
@@ -150,47 +159,68 @@ Source names match the `name:` field in `config.yaml`.
 
 ## File personal documents
 
-`nexus file` classifies a document, moves it to the right folder, and ingests it — all in one command.
+`nexus organise` classifies documents, shows a plan of where each file will go, and moves + ingests on confirmation.
 
 ```bash
-nexus file ~/Downloads/invoice-april-2026.pdf
+nexus organise ~/Downloads                          # batch: all files in a directory
+nexus organise ~/Downloads/invoice-april-2026.pdf   # single file
+nexus organise                                      # all personal.watchDirs
 ```
 
 nexus will:
-1. Extract the first ~1200 characters of readable text
+1. Extract the first ~1200 characters of readable text from each file
 2. Send it to `qwen2.5:7b` with a classification prompt
 3. Get back: document type, language, institution, date, suggested filename, destination folder
-4. Move the file to `~/Documents/PersonalDocs/<category>/YYYY-MM_Institution_Description.pdf`
-5. Ingest it into the database with the classification metadata
+4. Show a full plan before moving anything
 
-Preview without moving:
+```
+  Plan for ~/Downloads (2 files):
+
+    invoice-april-2026.pdf  →  ~/Documents/PersonalDocs/finance/invoices/2026-04_Canva_Invoice.pdf   [existing]
+    k8s-handbook.pdf        →  ~/ops-nexus/intelligence/learnings/Kubernetes/                         [new dir]
+
+  Apply? [Y/n]
+```
+
+5. On confirmation: `mkdir -p`, move files, ingest all
+
+Preview without moving or ingesting:
 
 ```bash
-nexus file ~/Downloads/invoice-april-2026.pdf --dry-run
+nexus organise --dry-run ~/Downloads
 ```
 
 ---
 
 ## Watch mode
 
-Instead of manually running `nexus file`, watch mode does it automatically for any new file that appears in configured directories.
+`nexus watch` runs continuously in the background, monitoring multiple directory types at once.
 
 ```bash
-nexus watch
+make watch-install   # install as a launchd service — starts now and on every login
 ```
 
-This watches `personal.watchDirs` from `config.yaml` (default: `~/Downloads` and `~/Desktop`). When a `.pdf`, `.md`, or `.txt` file is created:
+What it watches:
 
-1. nexus waits 3 seconds to ensure the file has finished writing (browser downloads, phone transfers)
-2. Classifies, moves, and ingests it automatically
-3. Prints a one-line confirmation
+- **`personal.watchDirs`** (`~/Downloads`, `~/Desktop` by default) — when a `.pdf`, `.md`, or `.txt` file appears, nexus classifies it, moves it to `PersonalDocs/`, and ingests it automatically
+- **Sources with `watch: true`** — re-scans every 5 minutes and ingests any new or changed files
+- **`roots.workspace`** (if configured) — regenerates `dir_structure.md` whenever the workspace structure changes, keeping the snapshot queryable
+- **`roots.repos`** (if configured) — detects newly cloned repositories
+
+**Example log output:**
 
 ```
   → Detected: invoice-april-2026.pdf
   ✓ Filed [invoice/en]: 2026-04_Canva_Invoice.pdf
+  ✓ Workspace snapshot updated: ~/ops-nexus/dir_structure.md
 ```
 
-Run `nexus watch` in a terminal you leave open, or wire it to a launchd agent to run at login.
+Check logs and status:
+
+```bash
+tail -f ~/Library/Logs/nexus-watch.log
+launchctl list | grep nexus
+```
 
 ---
 

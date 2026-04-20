@@ -24,7 +24,7 @@ nexus runs three AI models entirely on your laptop. It reads your documents, und
 make setup     # one-time: database, AI models, config, directories
 make ingest    # index your knowledge base
 nexus watch    # auto-file new documents from ~/Downloads and ~/Desktop
-nexus query "What was the Canva invoice for?"
+nexus          # start a chat session — ask anything in plain English
 ```
 
 ---
@@ -44,16 +44,22 @@ nexus query "What was the Canva invoice for?"
 
 ---
 
-## How a query works
+## How a question is answered
 
 ```
-Your question
+nexus (bare) → interactive chat session
+  Your question
   → embed with mxbai-embed-large (1024-dim vector)
   → cosine similarity search in pgvector (top 15 chunks)
   → filter by relevance threshold (default 0.70)
   → expand with structural children
   → [if live sources registered] run kubectl / terraform / etc.
-  → llama3.1:8b generates a cited answer in English
+  → llama3.1:8b streams a cited answer in English
+  → session saved to ~/.config/nexus/chats/
+
+nexus --resume <session>  → continue a previous session with full history
+nexus query "..."         → single one-off question (no session, no history)
+nexus search "..."        → path/title substring lookup (no embedding needed)
 ```
 
 ---

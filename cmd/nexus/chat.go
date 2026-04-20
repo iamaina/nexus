@@ -1,0 +1,615 @@
+package nexus
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/chzyer/readline"
+	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/live"
+	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/models"
+	"github.com/iamaina/nexus/internal/summarizer"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+)
+
+// ── ANSI colour codes ────────────────────────────────────────────────────────
+
+const (
+	ansiReset = "\033[0m"
+	ansiBold  = "\033[1m"
+	ansiDim   = "\033[2m"
+	ansiGreen = "\033[32m"
+	ansiCyan  = "\033[36m"
+	ansiGray  = "\033[90m"
+)
+
+// cs holds the active colour sequences.
+// All fields are empty strings when stdout is not a TTY (piped/redirected).
+type cs struct{ reset, bold, dim, green, cyan, gray string }
+
+func newCS() cs {
+	fi, err := os.Stdout.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return cs{}
+	}
+	return cs{ansiReset, ansiBold, ansiDim, ansiGreen, ansiCyan, ansiGray}
+}
+
+// termSize returns the current terminal dimensions, falling back to 80×24.
+func termSize() (cols, rows int) {
+	w, h, err := term.GetSize(int(os.Stdout.Fd())) //nolint:gosec
+	if err != nil || w <= 0 {
+		w = 80
+	}
+	if err != nil || h <= 0 {
+		h = 24
+	}
+	return w, h
+}
+
+// pad returns leading spaces to center text of visLen characters in cols columns.
+func pad(visLen, cols int) string {
+	return strings.Repeat(" ", max((cols-visLen)/2, 0))
+}
+
+func (c cs) sep(cols int) string {
+	return c.gray + strings.Repeat("─", cols) + c.reset
+}
+
+// ── Spinner ──────────────────────────────────────────────────────────────────
+
+// startSpinner prints a braille spinner on the current line.
+// Returns a stop func that clears the line (must be called exactly once).
+// No-op when tty is false.
+func startSpinner(label string, tty bool) func() {
+	if !tty {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(80 * time.Millisecond):
+				fmt.Printf("\r  %s  %s", frames[i%len(frames)], label)
+				i++
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		fmt.Print("\r\033[K")
+	}
+}
+
+// ── indentWriter ─────────────────────────────────────────────────────────────
+
+// indentWriter inserts a fixed prefix after every newline (and once at the
+// start) so streamed LLM responses stay visually aligned with source lines.
+type indentWriter struct {
+	w       io.Writer
+	prefix  string
+	started bool
+}
+
+func (iw *indentWriter) Write(p []byte) (int, error) {
+	if !iw.started {
+		iw.started = true
+		_, _ = io.WriteString(iw.w, iw.prefix)
+	}
+	s := strings.ReplaceAll(string(p), "\n", "\n"+iw.prefix)
+	_, err := iw.w.Write([]byte(s))
+	return len(p), err
+}
+
+// ── Command vars ─────────────────────────────────────────────────────────────
+
+var (
+	chatModel  string
+	chatNoLive bool
+	chatSource string
+)
+
+// ── Shared completions helper ─────────────────────────────────────────────────
+
+// chatSessionNames returns saved session names (without .md) for tab completion.
+func chatSessionNames() ([]string, cobra.ShellCompDirective) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	entries, err := os.ReadDir(filepath.Join(home, ".config", "nexus", "chats"))
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			names = append(names, strings.TrimSuffix(e.Name(), ".md"))
+		}
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+// ── Core chat function ────────────────────────────────────────────────────────
+
+// runChatSession is the shared implementation for both `nexus` and `nexus chat`.
+// resumeSession is the session name to continue; empty starts a new session.
+func runChatSession(cmd *cobra.Command, resumeSession string) error {
+	ctx := cmd.Context()
+
+	a, ok := ctx.Value(app.AppKey).(*app.Application)
+	if !ok {
+		return fmt.Errorf("application not initialised")
+	}
+
+	c := newCS()
+	tty := c.reset != ""
+	cols, rows := termSize()
+
+	threshold := queryThreshold
+	if threshold == 0 {
+		threshold = a.Config.RelevanceThreshold
+	}
+	if threshold == 0 {
+		threshold = 0.70
+	}
+
+	sum := a.Summarizer
+	if chatModel != "" {
+		sum = a.Summarizer.WithModel(chatModel)
+	}
+
+	startTime := time.Now()
+	var history []summarizer.ChatMessage
+	var sessionPath string
+	var logFile *os.File
+
+	// ── Header ───────────────────────────────────────────────────────────────
+	if tty {
+		fmt.Print("\033[2J\033[H") // clear screen
+	}
+
+	pid := os.Getpid()
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f  %s·%s  pid %d\n",
+		pad(len(headerVis), cols),
+		c.bold+c.cyan, Version, c.reset,
+		c.dim, c.reset,
+		c.bold, sum.Model(), c.reset,
+		c.dim, c.reset,
+		threshold,
+		c.dim, c.reset,
+		pid,
+	)
+
+	// ── Load existing session if resuming ────────────────────────────────────
+	if resumeSession != "" {
+		p, err := resolveChatPath(resumeSession)
+		if err != nil {
+			return fmt.Errorf("session not found: %w", err)
+		}
+		loaded, err := loadChatSession(p)
+		if err != nil {
+			return fmt.Errorf("loading session: %w", err)
+		}
+		sessionPath = p
+		history = loaded
+
+		// Open file for appending immediately so Ctrl+C doesn't lose turns
+		f, err := os.OpenFile(sessionPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec
+		if err != nil {
+			logger.Warn(ctx, "could not open session for append", "err", err)
+		} else {
+			logFile = f
+		}
+
+		name := strings.TrimSuffix(filepath.Base(p), ".md")
+		contVis := fmt.Sprintf("Continuing: %s  (%d exchange(s))", name, len(history)/2)
+		fmt.Printf("%s%sContinuing:%s %s  %s(%d exchange(s))%s\n",
+			pad(len(contVis), cols),
+			c.dim, c.reset, name, c.dim, len(history)/2, c.reset)
+	}
+
+	fmt.Println(c.sep(cols))
+	fmt.Println()
+
+	// ── Sticky header via terminal scroll region ──────────────────────────────
+	// After printing the header we fix a scroll region that begins on the next
+	// row, so the header rows are outside the scrollable area and stay pinned.
+	// Row layout (1-indexed, after clear screen):
+	//   row 1:         blank  (leading \n in the nexus Printf)
+	//   row 2:         nexus · model · threshold · pid
+	//   row 3 (+1 if resuming): "Continuing:" line
+	//   row 3 or 4:   separator
+	//   row 4 or 5:   blank  ← cursor is here after fmt.Println()
+	// So content starts on row 5 (fresh) or 6 (resume).
+	if tty {
+		headerLines := 4
+		if resumeSession != "" {
+			headerLines = 5
+		}
+		if rows > headerLines+2 {
+			// \033[{t};{b}r  — set scroll region to rows t..b
+			// \033[{r};1H    — move cursor to first row of scroll region
+			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
+		}
+		defer func() {
+			// Reset scroll region and park cursor at the last row so the
+			// returning shell prompt appears at the bottom, not mid-screen.
+			fmt.Printf("\033[r\033[%d;1H\n", rows)
+		}()
+	}
+
+	// ── Main loop ─────────────────────────────────────────────────────────────
+	// readline provides proper line editing: arrow keys, Ctrl+A/E/W/K, history.
+	// \001...\002 wraps invisible ANSI sequences so readline measures prompt
+	// width correctly when positioning the cursor during arrow-key navigation.
+	rlPrompt := "❯ "
+	if tty {
+		rlPrompt = "\001" + c.bold + c.green + "\002❯\001" + c.reset + "\002 "
+	}
+	rl, rlErr := readline.NewEx(&readline.Config{
+		Prompt:       rlPrompt,
+		HistoryLimit: 200,
+	})
+	if rlErr != nil {
+		return fmt.Errorf("readline: %w", rlErr)
+	}
+	defer func() { _ = rl.Close() }()
+
+	// Close readline when context is cancelled so any blocking Readline()
+	// call in the goroutine below unblocks immediately.
+	go func() {
+		<-ctx.Done()
+		_ = rl.Close()
+	}()
+
+	type scanLine struct {
+		text string
+		ok   bool
+	}
+
+loop:
+	for {
+		// One goroutine per Readline call: the prompt appears only when we are
+		// ready for input, not during embedding / streaming / file listing.
+		scanCh := make(chan scanLine, 1)
+		go func() {
+			line, err := rl.Readline()
+			if err != nil {
+				scanCh <- scanLine{ok: false}
+				return
+			}
+			scanCh <- scanLine{text: line, ok: true}
+		}()
+
+		select {
+		case <-ctx.Done():
+			fmt.Println()
+			break loop
+
+		case sl := <-scanCh:
+			if !sl.ok {
+				fmt.Println()
+				break loop
+			}
+			question := strings.TrimSpace(sl.text)
+			if question == "" {
+				continue
+			}
+			if question == "exit" || question == "quit" {
+				fmt.Println()
+				break loop
+			}
+
+			fmt.Println()
+
+			// Embed + search
+			stop := startSpinner("searching...", tty)
+
+			embeddings, err := a.Embedder.Embed(ctx, []string{question})
+			if err != nil {
+				stop()
+				if ctx.Err() != nil {
+					break loop
+				}
+				fmt.Printf("  embed error: %v\n\n", err)
+				continue
+			}
+
+			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, chatSource)
+			if err != nil {
+				stop()
+				if ctx.Err() != nil {
+					break loop
+				}
+				fmt.Printf("  search error: %v\n\n", err)
+				continue
+			}
+
+			var matched []models.Result
+			for _, r := range candidates {
+				if r.Score >= threshold && len(strings.TrimSpace(r.Text)) > 80 {
+					matched = append(matched, r)
+				}
+			}
+
+			// Context expansion
+			seen := make(map[string]bool)
+			var results []models.Result
+			for _, r := range matched {
+				key := fmt.Sprintf("%d:%d", r.DocumentID, r.ChunkIndex)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				results = append(results, r)
+				children, childErr := a.Chunks.FetchContext(ctx, r, 5)
+				if childErr != nil {
+					continue
+				}
+				for _, child := range children {
+					ck := fmt.Sprintf("%d:%d", child.DocumentID, child.ChunkIndex)
+					if !seen[ck] && len(strings.TrimSpace(child.Text)) > 80 {
+						seen[ck] = true
+						results = append(results, child)
+					}
+				}
+			}
+			if len(results) > 12 {
+				results = results[:12]
+			}
+
+			// Live context
+			var liveOutputs []live.Output
+			if !chatNoLive {
+				liveSources, liveErr := a.ContextSources.List(ctx)
+				if liveErr == nil && len(liveSources) > 0 {
+					liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
+					for _, o := range liveOutputs {
+						if o.Err != nil {
+							logger.Warn(ctx, "live source failed", "name", o.Name, "err", o.Err)
+						}
+					}
+				}
+			}
+
+			stop() // clear spinner
+
+			// Source attribution
+			var srcParts []string
+			for _, o := range liveOutputs {
+				if o.Err == nil && o.Text != "" {
+					srcParts = append(srcParts, "⚡ "+o.Name)
+				}
+			}
+			seenFiles := make(map[string]bool)
+			for _, r := range results {
+				if r.Score > 0 && !seenFiles[r.File] {
+					seenFiles[r.File] = true
+					label := strings.TrimSuffix(filepath.Base(r.File), filepath.Ext(r.File))
+					if r.Chapter != "" {
+						label += " — " + r.Chapter
+					}
+					srcParts = append(srcParts, "📄 "+label)
+				}
+			}
+			if len(srcParts) > 0 {
+				for _, part := range srcParts {
+					fmt.Printf("  %s%s%s\n", c.dim, part, c.reset)
+				}
+				fmt.Println()
+			} else if len(candidates) > 0 {
+				fmt.Printf("  %s(no context above threshold %.2f)%s\n\n",
+					c.dim, threshold, c.reset)
+			}
+
+			// Stream response
+			w := &indentWriter{w: os.Stdout, prefix: "  "}
+			answer, err := sum.StreamChat(ctx, w, history, question, results, liveOutputs)
+			if err != nil {
+				fmt.Println()
+				if ctx.Err() != nil {
+					break loop
+				}
+				fmt.Printf("  generate error: %v\n\n", err)
+				continue
+			}
+			fmt.Print("\n\n")
+
+			// "Open to read more:" — unique file paths from matched results
+			home, _ := os.UserHomeDir()
+			seenPaths := make(map[string]bool)
+			var readMore []string
+			for _, r := range results {
+				if !seenPaths[r.File] {
+					seenPaths[r.File] = true
+					p := strings.Replace(r.File, home, "~", 1)
+					readMore = append(readMore, p)
+				}
+			}
+			if len(readMore) > 0 {
+				fmt.Printf("  %sOpen to read more:%s\n", c.dim, c.reset)
+				for _, p := range readMore {
+					fmt.Printf("  %s  %s%s\n", c.dim, p, c.reset)
+				}
+				fmt.Println()
+			}
+
+			fmt.Println(c.sep(cols))
+			fmt.Println()
+
+			// ── Persist this exchange immediately ────────────────────────────
+			// Writing after each exchange means Ctrl+C only loses the in-progress
+			// answer, not the entire session.
+			logEntry := fmt.Sprintf("**You:** %s\n\n**nexus:** %s\n\n---\n\n", question, answer)
+
+			if logFile == nil && sessionPath == "" {
+				// First exchange of a new session — create the file now
+				f, path, createErr := openNewChatFile(startTime, sum.Model(), question)
+				if createErr != nil {
+					logger.Warn(ctx, "could not create chat file", "err", createErr)
+				} else {
+					logFile = f
+					sessionPath = path
+					home, _ := os.UserHomeDir()
+					fmt.Printf("  %sSaving to → %s%s\n\n",
+						c.dim, strings.Replace(path, home, "~", 1), c.reset)
+				}
+			}
+
+			if logFile != nil {
+				_, _ = logFile.WriteString(logEntry)
+			}
+
+			history = append(history,
+				summarizer.ChatMessage{Role: "user", Content: question},
+				summarizer.ChatMessage{Role: "assistant", Content: answer},
+			)
+		}
+	}
+
+	// ── Close and report ─────────────────────────────────────────────────────
+	if logFile != nil {
+		name := logFile.Name()
+		_ = logFile.Close()
+		home, _ := os.UserHomeDir()
+		verb := "saved"
+		if resumeSession != "" {
+			verb = "updated"
+		}
+		fmt.Printf("  %sSession %s → %s%s\n",
+			c.dim, verb, strings.Replace(name, home, "~", 1), c.reset)
+	}
+
+	return nil
+}
+
+func init() {
+	// Chat flags live on RootCmd — bare `nexus` IS the chat interface.
+	RootCmd.Flags().StringVar(&chatModel, "model", "", "generation model (overrides config)")
+	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
+	RootCmd.Flags().StringVar(&chatSource, "source", "", "restrict search to a source or filename")
+}
+
+// ── File helpers ──────────────────────────────────────────────────────────────
+
+// openNewChatFile creates the session file and writes the header.
+// Returns the open file (ready for appending) and its path.
+func openNewChatFile(start time.Time, model, firstQuestion string) (*os.File, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, "", err
+	}
+	dir := filepath.Join(home, ".config", "nexus", "chats")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, "", err
+	}
+
+	slug := chatSlug(firstQuestion)
+	name := fmt.Sprintf("%s_%s.md", start.Format("2006-01-02_15-04"), slug)
+	path := filepath.Join(dir, name)
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec
+	if err != nil {
+		return nil, "", err
+	}
+
+	header := fmt.Sprintf("# %s\n**Started:** %s  **Model:** %s\n\n---\n\n",
+		slug, start.Format("2006-01-02 15:04:05"), model)
+	if _, err := f.WriteString(header); err != nil {
+		_ = f.Close()
+		return nil, "", err
+	}
+
+	return f, path, nil
+}
+
+// resolveChatPath finds the full path for a session name (with or without .md).
+func resolveChatPath(arg string) (string, error) {
+	if filepath.IsAbs(arg) {
+		return arg, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".config", "nexus", "chats")
+	for _, candidate := range []string{
+		filepath.Join(dir, arg),
+		filepath.Join(dir, arg+".md"),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("%q not found in %s", arg, dir)
+}
+
+// loadChatSession parses a saved session and returns the conversation history.
+func loadChatSession(path string) ([]summarizer.ChatMessage, error) {
+	data, err := os.ReadFile(path) //nolint:gosec
+	if err != nil {
+		return nil, err
+	}
+
+	_, body, found := strings.Cut(string(data), "\n---\n\n")
+	if !found {
+		return nil, nil
+	}
+
+	const userPrefix = "**You:** "
+	const nexusMark = "\n\n**nexus:** "
+
+	var history []summarizer.ChatMessage
+	for turn := range strings.SplitSeq(body, "\n\n---\n\n") {
+		turn = strings.TrimSpace(turn)
+		if turn == "" || !strings.HasPrefix(turn, userPrefix) {
+			continue
+		}
+		question, answer, ok := strings.Cut(strings.TrimPrefix(turn, userPrefix), nexusMark)
+		if !ok {
+			continue
+		}
+		history = append(history,
+			summarizer.ChatMessage{Role: "user", Content: question},
+			summarizer.ChatMessage{Role: "assistant", Content: answer},
+		)
+	}
+	return history, nil
+}
+
+// chatSlug converts a string into a filename-safe slug (max 50 chars).
+func chatSlug(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevHyphen := true
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			prevHyphen = false
+		} else if !prevHyphen {
+			b.WriteRune('-')
+			prevHyphen = true
+		}
+	}
+	slug := strings.TrimRight(b.String(), "-")
+	if len(slug) > 50 {
+		slug = strings.TrimRight(slug[:50], "-")
+	}
+	if slug == "" {
+		slug = "chat"
+	}
+	return slug
+}

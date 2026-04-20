@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/iamaina/nexus/internal/app"
@@ -93,10 +95,10 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 	headings := layout.DetectHeadings(lines, body, fontLevels)
 	headings = layout.MergeWrappedHeadings(headings)
 	blocks := layout.BuildBlocks(lines, body)
-	blocks = layout.MergeLists(blocks)
 	tree := layout.BuildHeadingTree(headings)
 	tree = layout.TrimFrontMatter(tree)
 	layout.AttachBlocks(tree, blocks)
+	layout.MergeNodeLists(tree)
 	sections := layout.BuildSections(tree)
 	logger.Debug(ctx, "file.layout_done",
 		slog.String("component", "ingestion"),
@@ -123,13 +125,16 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 			return false, nil
 		}
 		// No heading structure detected — treat the entire document as one flat section.
+		// Use the filename (without extension) as the title so code/config files
+		// cite their filename in query results rather than the generic "Document".
 		logger.Info(ctx, "file.flat_fallback",
 			slog.String("component", "ingestion"),
 			slog.String("event", "file.flat_fallback"),
 			slog.String("file_path", path),
 			slog.String("reason", "no_sections_detected"),
 		)
-		flat := layout.Section{Title: "Document", Level: 1, Content: blocks}
+		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		flat := layout.Section{Title: name, Level: 1, Content: blocks}
 		chunks = layout.ChunkSections([]layout.Section{flat}, 5)
 	}
 
@@ -140,7 +145,14 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 	for i, c := range chunks {
 		text := layout.ChunkToText(c)
 		enriched[i] = models.EnrichedChunk{Text: text, Chapter: c.Title, Level: c.Level}
-		texts[i] = text
+		// Include the section title in the embedded text so title-based queries
+		// (e.g. a date like "2026-04-14" or a chapter name) resolve via vector search.
+		// chunk_text stores content only; the title prefix is embedding-only.
+		embeddedText := text
+		if c.Title != "" {
+			embeddedText = c.Title + "\n" + text
+		}
+		texts[i] = embeddedText
 		charCount += len(text)
 	}
 	logger.Debug(ctx, "file.chunked",

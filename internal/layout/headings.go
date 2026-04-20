@@ -26,7 +26,7 @@ func DetectHeadings(lines []Line, bodyFont float64, _ []float64) []Heading {
 		// --- TEXT FILTERS ---
 		if !isMeaningfulText(text) ||
 			strings.Contains(text, ". . .") ||
-			regexp.MustCompile(`\d+$`).MatchString(text) ||
+			regexp.MustCompile(`\s\d+$`).MatchString(text) ||
 			line.FontSize <= bodyFont && isLikelySentence(text) {
 			continue
 		}

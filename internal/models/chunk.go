@@ -15,21 +15,24 @@ type ChunkModel struct {
 	DB *pgx.Conn
 }
 
-// Store inserts or updates the text chunks for a document in a single batch,
-// replacing N round-trips with one network call.
+// Store replaces all text chunks for a document: old chunks are deleted first,
+// then new ones are inserted in a single batch. This ensures stale chunks from
+// a previous ingest (e.g. if chunk count decreased after a layout fix) are removed.
 func (m *ChunkModel) Store(ctx context.Context, docID int64, chunks []EnrichedChunk) error {
 	if len(chunks) == 0 {
 		return nil
 	}
+
+	// Delete existing chunks so stale rows from a previous ingest don't linger.
+	if _, err := m.DB.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, docID); err != nil {
+		return fmt.Errorf("delete old chunks for doc %d: %w", docID, err)
+	}
+
 	batch := &pgx.Batch{}
 	for i, chunk := range chunks {
 		batch.Queue(
 			`INSERT INTO chunks (document_id, chunk_index, chunk_text, chapter, section_level)
-			 VALUES ($1, $2, $3, $4, $5)
-			 ON CONFLICT (document_id, chunk_index) DO UPDATE SET
-			     chunk_text    = EXCLUDED.chunk_text,
-			     chapter       = EXCLUDED.chapter,
-			     section_level = EXCLUDED.section_level`,
+			 VALUES ($1, $2, $3, $4, $5)`,
 			docID, i, chunk.Text, chunk.Chapter, chunk.Level,
 		)
 	}
@@ -182,19 +185,35 @@ func (m *ChunkModel) FetchContext(ctx context.Context, parent Result, maxChunks 
 }
 
 // ListChaptersByDocumentID returns distinct top-level chapter names for a single document.
+// If the minimum level has only one distinct chapter (e.g. a document title), it falls
+// through to the next level so actual section names are returned instead.
 func (m *ChunkModel) ListChaptersByDocumentID(ctx context.Context, docID int64) ([]string, error) {
 	rows, err := m.DB.Query(ctx, `
 		WITH min_level AS (
 			SELECT MIN(section_level) AS lvl
 			FROM chunks
 			WHERE document_id = $1 AND section_level > 0
+		),
+		top_count AS (
+			SELECT COUNT(DISTINCT chapter) AS cnt
+			FROM chunks
+			CROSS JOIN min_level
+			WHERE document_id = $1
+			  AND chapter IS NOT NULL AND chapter != ''
+			  AND section_level = min_level.lvl
+		),
+		effective_level AS (
+			SELECT CASE WHEN top_count.cnt <= 1
+			            THEN min_level.lvl + 1
+			            ELSE min_level.lvl END AS lvl
+			FROM min_level, top_count
 		)
 		SELECT chapter
 		FROM chunks
-		CROSS JOIN min_level
+		CROSS JOIN effective_level
 		WHERE document_id = $1
 		  AND chapter IS NOT NULL AND chapter != ''
-		  AND section_level = min_level.lvl
+		  AND section_level = effective_level.lvl
 		GROUP BY chapter
 		ORDER BY MIN(chunk_index)`,
 		docID,
@@ -252,6 +271,52 @@ func (m *ChunkModel) ListChaptersByBook(ctx context.Context, bookName string) ([
 		chapters = append(chapters, ch)
 	}
 	return chapters, rows.Err()
+}
+
+// FindByPathOrChapter returns chunks whose document file path or chapter title
+// contains query (case-insensitive LIKE). If source is non-empty, results are
+// additionally filtered by source_name or file_path. Results are ordered by
+// file path then chunk index so related chunks appear together.
+func (m *ChunkModel) FindByPathOrChapter(ctx context.Context, query, source string) ([]Result, error) {
+	like := "%" + query + "%"
+	args := []any{like}
+
+	sourceFilter := ""
+	if source != "" {
+		args = append(args, "%"+source+"%")
+		sourceFilter = `AND (d.source_name ILIKE $2 OR d.file_path ILIKE $2)`
+	}
+
+	rows, err := m.DB.Query(ctx, fmt.Sprintf(`
+		SELECT
+			c.document_id,
+			c.chunk_index,
+			COALESCE(c.section_level, 0),
+			d.file_path,
+			COALESCE(c.chapter, '') AS chapter,
+			c.chunk_text
+		FROM chunks c
+		JOIN documents d ON c.document_id = d.id
+		WHERE (d.file_path ILIKE $1 OR c.chapter ILIKE $1)
+		%s
+		ORDER BY d.file_path, c.chunk_index
+		LIMIT 100`, sourceFilter),
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.DocumentID, &r.ChunkIndex, &r.Level, &r.File, &r.Chapter, &r.Text); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
 }
 
 // vectorToString converts a float32 slice into a Postgres vector literal e.g. "[0.1,0.2,...]".
