@@ -160,17 +160,24 @@ git push origin feat/my-feature
 # → open PR into stable/v0.1.0
 
 # 3. When the milestone is complete and tested:
-#    Squash all commits in the stable branch into one conventional commit
-git rebase -i master
-# → set all but the first to 's', write one clean conventional commit message
+#    Bring master up to date first — CI or hotfixes may have landed since the
+#    stable branch was cut. Skipping this causes conflicts on the PR.
+git fetch origin
+git rebase origin/master
+# Resolve any conflicts, then continue: git rebase --continue
 
-# 4. Force-push the squashed branch
+# 4. Squash all commits in the stable branch into one conventional commit
+#    (git reset --soft is simpler than interactive rebase for many commits)
+git reset --soft origin/master
+git commit -m "feat(scope): short description of the milestone"
+
+# 5. Force-push the squashed branch
 git push --force origin stable/v0.1.0
 
-# 5. Open a PR into master
+# 6. Open a PR into master
 #    The PR title must match your squashed commit message (CI enforces this)
 
-# 6. On merge — CI automatically:
+# 7. On merge — CI automatically:
 #    a) Creates a version tag based on commit type:
 #       feat:     → minor bump  (v0.0.1 → v0.1.0)
 #       fix:      → patch bump  (v0.1.0 → v0.1.1)
@@ -178,9 +185,9 @@ git push --force origin stable/v0.1.0
 #    b) Creates the next stable branch (e.g. stable/v0.2.0) from master
 #    c) Protects the new branch (require PR, CI must pass)
 
-# 7. Switch to the new branch — no manual cleanup needed
+# 8. Switch to the new branch — no manual cleanup needed
 git checkout master && git pull
-git checkout stable/v0.5.0
+git checkout stable/v0.2.0
 ```
 
 > **Full squash guide:** [docs/commit-conventions.md](docs/commit-conventions.md)
