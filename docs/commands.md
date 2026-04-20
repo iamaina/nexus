@@ -4,6 +4,50 @@ Complete reference for every nexus CLI command and flag.
 
 ---
 
+## `nexus` — interactive chat (default)
+
+Running `nexus` with no subcommand starts an interactive chat session. Ask anything in
+plain English. Answers are cited and streamed token by token. Sessions are saved to
+`~/.config/nexus/chats/` automatically after each exchange.
+
+```bash
+nexus                                              # start a new session
+nexus --resume 2026-04-20_14-32_praefect           # continue a saved session (tab-complete)
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--resume string` | "" | Continue a saved session (tab-complete with session names) |
+| `--model string` | "" | Override generation model for this session |
+| `--no-live` | false | Skip live context sources (kubectl, terraform, etc.) |
+| `--source string` | "" | Restrict search to one source name or filename fragment |
+| `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
+
+Inside a session, type `exit` or `quit` to end, or press `Ctrl+C`. The session file is
+updated after every exchange so `Ctrl+C` only loses the answer that was in progress.
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|---|---|
+| `←` / `→` | Move cursor within the line |
+| `↑` / `↓` | Navigate session history |
+| `Ctrl+A` / `Ctrl+E` | Jump to start / end of line |
+| `Ctrl+W` | Delete word backwards |
+| `Ctrl+K` | Delete to end of line |
+| `Ctrl+U` | Clear the whole line |
+| `Backspace` | Delete character |
+
+The header line (`nexus vX.Y.Z · model · threshold · pid`) is pinned — it stays visible as
+answers scroll. The PID is shown for easy signal tracing:
+```
+kill $(cat ~/.config/nexus/nexus.pid)
+```
+
+---
+
 ## Global flags
 
 These work with every command:
@@ -11,7 +55,29 @@ These work with every command:
 ```
 --config string     path to config.yaml (default: ~/ops-nexus/nexus/config.yaml)
 --threshold float   override relevance threshold for this run (default: from config or 0.70)
+-v, --verbose       show connection and pipeline logs (INFO level)
 ```
+
+---
+
+## `nexus search`
+
+Finds documents and sections by file path or heading title using a plain substring match.
+Use this when you know the name of a file or section. For meaning-based search, use `nexus query`.
+
+```bash
+nexus search "change_management"
+nexus search "Reviewer checklist"
+nexus search praefect --source runbooks
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source string` | "" | Restrict to a source name or path substring |
+
+Results are grouped by file with chapter labels and 120-character text previews.
 
 ---
 
@@ -36,64 +102,104 @@ nexus ingest --force
 
 ---
 
-## `nexus file`
+## `nexus organise`
 
-Classifies a single document, moves it to the appropriate subdirectory of `PersonalDocs`, and ingests it.
+Classifies documents, shows a plan of where each file will go, and moves + ingests on confirmation. Replaces `nexus file`.
 
 ```bash
-nexus file ~/Downloads/statement.pdf
-nexus file ~/Downloads/statement.pdf --dry-run
+nexus organise                                      # process all personal.watchDirs
+nexus organise ~/Downloads                          # process a directory
+nexus organise ~/Downloads/invoice.pdf              # process a single file
+nexus organise --dry-run ~/Downloads                # show plan without moving anything
 ```
 
 **Flags:**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--dry-run` | false | Classify and print the result without moving or ingesting the file |
+| `--dry-run` | false | Show the plan without moving or ingesting |
+| `--force` / `-f` | false | Re-ingest even if file content is unchanged |
 
-**What "classify" means:** nexus extracts the first ~1200 characters of readable text from the document, sends it to `qwen2.5:7b` with a structured prompt, and parses the response to get: document type, language, institution, date, suggested filename, and destination folder inside PersonalDocs.
+**How path resolution works:**
+
+- If the argument is a **file** → single-file mode
+- If the argument is a **directory** → batch mode, all supported files (`.pdf`, `.md`, `.txt`) inside it
+- If **no argument** → batch mode on all `personal.watchDirs`
+
+**Routing:**
+
+- `book` and `article` types search configured source directories for an existing directory matching the document topic; if none found, suggests a new directory under the first source root
+- All other types route to `PersonalDocs/{dest_dir}/` as classified by the LLM
 
 **Example output:**
 
 ```
-Classified:
-  Type:        invoice
-  Language:    en
-  Institution: Canva
-  Date:        2026-03
-  Destination: ~/Documents/PersonalDocs/finance/invoices/2026-03_Canva_Invoice.pdf
+  Classifying 3 file(s)...
 
-→ Moving file...
-→ Ingesting...
-✓ Done
+  Classifying invoice-april-2026.pdf ...
+  Classifying kubernetes-handbook.pdf ...
+  Classifying bank-statement.pdf ...
+
+  Plan for ~/Downloads (3 file(s)):
+
+    invoice-april-2026.pdf    →  ~/Documents/PersonalDocs/finance/invoices/2026-04_Canva_Invoice.pdf              [existing]
+    kubernetes-handbook.pdf   →  ~/ops-nexus/intelligence/learnings/Kubernetes/Kubernetes_In_Action.pdf           [existing]
+    bank-statement.pdf        →  ~/Documents/PersonalDocs/finance/bank-statements/2026-03_ABNAMRO_Statement.pdf   [new dir] 
+
+  Apply? [Y/n]
 ```
 
 ---
 
 ## `nexus watch`
 
-Watches configured directories for new files and automatically runs the `nexus file` pipeline on each one.
+Monitors multiple directory types concurrently. Designed to run as a background service via `make watch-install`.
 
 ```bash
 nexus watch
 ```
 
-Watches `personal.watchDirs` from `config.yaml` (default: `~/Downloads` and `~/Desktop`). Supported file types: `.pdf`, `.md`, `.txt`.
+Four watch modes run in parallel:
 
-nexus waits **3 seconds** after each file event before processing. This settle delay ensures browser downloads and phone transfers have finished writing before the file is read.
+| Mode | Trigger | Action |
+|---|---|---|
+| Personal intake | `personal.watchDirs` — file created/written | Classify → move → ingest (3s settle delay) |
+| Source re-scan | Sources with `watch: true` | Re-ingest new/changed files every 5 minutes |
+| Workspace snapshot | `roots.workspace` — directory created/removed | Regenerate and ingest `dir_structure.md` |
+| Repo detection | `roots.repos[watch: true]` — new directory | Detect newly cloned repositories (10s settle) |
 
-**Example output:**
+Supported personal file types: `.pdf`, `.md`, `.txt`.
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--list` | false | Print all configured watchers without starting |
+
+**Running as a background service (recommended):**
+
+```bash
+make watch-install     # install as launchd agent, starts at login
+make watch-restart     # reload after make install (new binary)
+make watch-uninstall   # remove the service
+tail -f ~/Library/Logs/nexus-watch.log   # logs
+```
+
+**Example output (foreground):**
 
 ```
-  Watching 2 director(ies). Press Ctrl+C to stop.
+  Watching 4 director(ies), 2 source ticker(s). Press Ctrl+C to stop.
 
   → Detected: rabobank-march-2026.pdf
   ✓ Filed [bank_statement/nl]: 2026-03_Rabobank_Bank_Statement.pdf
+  ✓ Workspace snapshot updated: ~/ops-nexus/dir_structure.md
 ```
 
 ---
 
 ## `nexus query`
+
+`nexus query` was the original interface to nexus before the interactive chat session became the default. It performs the same semantic search and LLM answer pipeline as the chat, but exits immediately after printing the answer — no session, no history, no streaming UI. It exists for automation and scripting: results can be piped, redirected, or called from cron jobs. Use `nexus` (bare) for day-to-day interactive work; use `nexus query` when you need a single answer in a script or want to chain it with other tools.
 
 Embeds your question, searches for relevant chunks, and generates a cited answer.
 
@@ -263,6 +369,135 @@ nexus layout --chunks --page-from 1 --page-to 20 mybook.pdf
 
 # What font sizes are in this document?
 nexus layout --fonts mybook.pdf
+```
+
+---
+
+## `nexus repo`
+
+Manage and locate git repositories across your workspace.
+
+### `nexus repo scan`
+
+Walks all configured `roots.repos` directories, discovers git repositories, and registers them in the nexus database. Run once after setup; `nexus watch` keeps the database current as new repos are cloned.
+
+```bash
+nexus repo scan
+```
+
+### `nexus repo list`
+
+Lists all registered repositories grouped by root, with live branch and dirty status.
+
+```bash
+nexus repo list
+```
+
+### `nexus repo check <url>`
+
+Finds an existing clone or suggests where to put a new one.
+
+```bash
+nexus repo check git@gitlab.com:gl-infra/delivery.git
+nexus repo check https://github.com/iamaina/nexus.git
+```
+
+**Lookup order:**
+1. DB lookup by normalised remote URL (instant)
+2. Workspace root scan if not found in DB (auto-registers on match)
+3. Pattern inference from existing repos in the matching root
+
+**If found:**
+```
+  ✅  ~/ops-nexus/active-ops/gitlab-work/infrastructure/delivery
+      Branch: main  |  clean
+      Last commit: fix(ci): update pipeline config (2 days ago)
+```
+
+**If not found — suggests placement:**
+```
+  ❌  gitlab.com/gl-infra/delivery not found in any registered root.
+
+  Suggested location (work root):
+    ~/ops-nexus/active-ops/gitlab-work/infrastructure/delivery  [inferred from gl-infra/* pattern]
+
+  Clone here? [Y/n]
+```
+
+**If a different repo exists at the suggested path:**
+```
+  ⚠️   A different repository already exists at that path:
+      remote: gitlab.com/gitlab-com/gl-infra/delivery
+  Did you mean: nexus repo check git@gitlab.com:gitlab-com/gl-infra/delivery.git ?
+```
+
+---
+
+## `nexus gdoc`
+
+Manage Google Doc sources — register shared docs so nexus can search them and keep them current.
+
+### One-time setup
+
+1. Create a Google Cloud project, enable the **Google Docs API**, and create OAuth 2.0 credentials (Desktop app type). Download `credentials.json`.
+2. Add to `config.yaml`:
+   ```yaml
+   gdoc:
+     credentialsPath: ~/path/to/credentials.json
+   ```
+3. Authenticate once:
+   ```bash
+   nexus gdoc auth
+   ```
+   A browser window opens. Grant access. The token is saved and reused automatically.
+
+### `nexus gdoc add`
+
+Register a Google Doc and ingest it immediately.
+
+```bash
+nexus gdoc add https://docs.google.com/document/d/<id>/edit --name manager-1on1
+nexus gdoc add https://docs.google.com/document/d/<id>/edit --name mentor-notes
+```
+
+**Flags:**
+
+| Flag | Required | Description |
+|---|---|---|
+| `--name string` | yes | Short name to identify the doc |
+
+The doc is saved as `~/.local/share/nexus/gdocs/{name}.md` and ingested as source `gdocs`. The sync directory can be changed with `gdoc.syncDir` in config.
+
+### `nexus gdoc sync`
+
+Re-fetch and re-ingest one or all registered docs. nexus watch does this automatically every 30 minutes.
+
+```bash
+nexus gdoc sync                  # sync all
+nexus gdoc sync manager-1on1     # sync one
+```
+
+### `nexus gdoc list`
+
+Show all registered docs with their last sync time.
+
+```bash
+nexus gdoc list
+```
+
+```
+  NAME                      DOC ID                                        LAST SYNCED
+  ────────────────────────  ────────────────────────────────────────────  ────────────────
+  manager-1on1              1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2up   2026-04-16 09:15
+  mentor-notes              1aB2cD3eF4gH5iJ6kL7mN8oP9qR0sT1uV2wX3yZ4a    2026-04-16 09:15
+```
+
+### `nexus gdoc rm`
+
+Remove a registered doc. The ingested content stays in the search index until the document file is deleted and the index rebuilt.
+
+```bash
+nexus gdoc rm manager-1on1
 ```
 
 ---

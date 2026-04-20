@@ -122,6 +122,13 @@ func (m *DocumentModel) Summary(ctx context.Context) ([]SourceSummary, error) {
 	return out, rows.Err()
 }
 
+// DeleteByPath removes a document and all its chunks (via CASCADE) by file path.
+// Returns nil if the document does not exist (idempotent).
+func (m *DocumentModel) DeleteByPath(ctx context.Context, filePath string) error {
+	_, err := m.DB.Exec(ctx, `DELETE FROM documents WHERE file_path = $1`, filePath)
+	return err
+}
+
 // Insert upserts document metadata and returns the document ID.
 // meta may be nil for batch ingestion; when provided the classification
 // columns (doc_type, language, institution, doc_date) are stored too.

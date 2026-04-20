@@ -70,9 +70,9 @@ To ingest your documents after setup:
 make ingest
 ```
 
-To run a query:
+To start a chat session:
 ```bash
-go run main.go query "your question here"
+go run main.go
 ```
 
 ---
@@ -82,6 +82,13 @@ go run main.go query "your question here"
 ```
 nexus/
 ├── cmd/nexus/          CLI commands (one file per command)
+│   ├── root.go         Entry point — bare nexus starts a chat session
+│   ├── chat.go         Interactive chat (readline, streaming, session persistence)
+│   ├── query.go        nexus query (non-interactive)
+│   ├── search.go       nexus search (path/title lookup)
+│   ├── organise.go     nexus organise
+│   ├── repo.go         nexus repo
+│   └── watch.go        nexus watch
 ├── internal/
 │   ├── app/            Dependency wiring (Application struct)
 │   ├── classifier/     Document classification via qwen2.5:7b
@@ -89,12 +96,15 @@ nexus/
 │   ├── embedder/       Text embedding via mxbai-embed-large
 │   ├── ingestion/      Per-file ingestion pipeline
 │   ├── layout/         ✅ STABLE — structure-aware document parser
+│   ├── live/           Shell command runner for live context sources
 │   ├── logger/         Coloured terminal / JSON logging
 │   ├── models/         Database access layer
-│   └── summarizer/     Answer generation via llama3.1:8b
+│   ├── organiser/      Directory matcher for nexus organise
+│   ├── summarizer/     Answer generation — streaming and batch
+│   └── workspace/      Workspace snapshot generator
 ├── scripts/
 │   └── extract_pdf.py  PyMuPDF bridge
-├── main.go
+├── main.go             Signal handling, PID file, panic recovery
 ├── Makefile
 └── config.yaml         (gitignored — created by make setup)
 ```
@@ -242,16 +252,6 @@ vMAJOR.MINOR.PATCH
    │     └──────── new features, backwards compatible
    └────────────── breaking changes or major mode completions
 ```
-
-### Version milestones
-
-| Version | Milestone |
-|---|---|
-| v0.1.x | Core RAG pipeline (stable) |
-| v0.2.x | Mode 1 — Personal Document Safe ✅ |
-| v0.3.x | Mode 2 — Work Intelligence |
-| v0.4.x | Mode 3 — Teacher |
-| v1.0.0 | All three modes stable, tests, production-ready |
 
 ### Tag rules
 

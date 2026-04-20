@@ -77,7 +77,8 @@ User question (string)
 │
 ├─ hard cap: max 12 chunks
 │
-└─ summarizer.SummarizeWithLive(...)    llama3.1:8b → cited answer in English
+├─ [chat mode]   summarizer.StreamChat(...)     tokens streamed to terminal as they arrive
+└─ [query mode]  summarizer.SummarizeWithLive(...)  llama3.1:8b → full answer returned at once
 ```
 
 **Why top-15 then filter?** Casting a wide net and filtering by threshold catches more relevant material than asking for exactly the right number upfront. The 0.70 threshold is conservative; lower it to 0.50 for shorter or less technical documents.
@@ -93,12 +94,16 @@ User question (string)
 ```
 nexus/
 ├── cmd/nexus/              CLI commands — one file per command
-│   ├── root.go             Cobra root, version resolution
+│   ├── root.go             Cobra root, version resolution, chat entry point
+│   ├── chat.go             Interactive chat session — readline, streaming, session persistence
+│   ├── query.go            nexus query (non-interactive one-shot)
+│   ├── search.go           nexus search (path/title substring lookup)
 │   ├── ingest.go           nexus ingest
-│   ├── query.go            nexus query
-│   ├── file.go             nexus file
+│   ├── organise.go         nexus organise (classify, plan, move, ingest)
+│   ├── repo.go             nexus repo check|scan|list
 │   ├── watch.go            nexus watch
 │   ├── context.go          nexus context add|list|rm|run
+│   ├── gdoc.go             nexus gdoc add|sync|list|rm|auth
 │   ├── chapters.go         nexus chapters
 │   └── layout.go           nexus layout (debug)
 │
@@ -107,17 +112,19 @@ nexus/
 │   ├── classifier/         Document type classification (qwen2.5:7b → structured JSON)
 │   ├── config/             YAML config loading — Load() returns *Config, no global state
 │   ├── embedder/           Text embedding — batched calls to mxbai-embed-large
-│   ├── ingestion/          Per-file pipeline + shared FileAndIngest for file/watch
+│   ├── ingestion/          Per-file pipeline + shared FileAndIngest for organise/watch
 │   ├── layout/             Structure-aware parser — STABLE, do not modify without care
 │   ├── live/               Execute shell commands with timeout for live context
 │   ├── logger/             Structured logging: coloured on tty, JSON when piped
-│   ├── models/             Database access layer (DocumentModel, ChunkModel, ContextModel)
-│   └── summarizer/         Answer generation — Summarize, SummarizeWithLive
+│   ├── models/             Database access layer (DocumentModel, ChunkModel, ContextModel, RepoModel)
+│   ├── organiser/          Topic-based directory matcher for nexus organise
+│   ├── summarizer/         Answer generation — Summarize, StreamChat, SummarizeChat
+│   └── workspace/          Workspace snapshot generator (dir_structure.md)
 │
 ├── scripts/
 │   └── extract_pdf.py      PyMuPDF bridge — outputs JSON array of Span objects
 │
-└── main.go                 Wires app.New() into Cobra context, executes root command
+└── main.go                 Signal handling (NotifyContext), PID file, panic recovery, app init
 ```
 
 ### Design principles
@@ -239,13 +246,13 @@ All tables are created (and columns added) automatically by migrations on startu
 
 ## How classification works
 
-When you run `nexus file` or `nexus watch`, the classifier:
+When you run `nexus organise` or `nexus watch`, the classifier:
 
 1. Extracts ~1200 characters of readable text from the file using the same layout pipeline
 2. Sends that text + the filename to `qwen2.5:7b` with a structured prompt
 3. Parses the JSON response: `{doc_type, language, institution, date, filename, dest_dir}`
 4. Sanitises the response (strips "Unknown", removes extensions from filename, sets safe defaults)
-5. Moves the file to `~/Documents/PersonalDocs/<dest_dir>/<filename>.<ext>`
+5. Shows a plan and moves the file to `~/Documents/PersonalDocs/<dest_dir>/<filename>.<ext>` on confirmation
 6. Ingests with the metadata stored in the `documents` table
 
 `qwen2.5:7b` is used for classification (not `llama3.1:8b`) because it is specifically good at producing valid structured JSON — fewer hallucinations in the output format.

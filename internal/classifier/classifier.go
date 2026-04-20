@@ -31,6 +31,9 @@ type Classification struct {
 	// DestDir is the relative sub-directory inside PersonalDocs.
 	// Example: "finance/bank-statements"
 	DestDir string `json:"dest_dir"`
+	// Topic is the main subject of the document — used by nexus organise to match
+	// existing directories. E.g. "Kubernetes", "Terraform", "Git". Empty for personal docs.
+	Topic string `json:"topic"`
 }
 
 // Classifier classifies documents using a local Ollama model.
@@ -148,7 +151,8 @@ Return this exact JSON (use empty string for unknown fields):
   "institution": "<issuing organisation, or empty string>",
   "date":        "<YYYY-MM-DD or YYYY-MM or empty string>",
   "filename":    "<clean name WITHOUT extension>",
-  "dest_dir":    "<relative path inside PersonalDocs>"
+  "dest_dir":    "<relative path inside PersonalDocs>",
+  "topic":       "<main subject for filing — e.g. Kubernetes, Terraform, Git; empty for personal docs>"
 }`, filename, previewSection)
 }
 
@@ -162,6 +166,7 @@ func (cl *Classification) sanitise() {
 	}
 	cl.Date = strings.TrimSpace(cl.Date)
 	cl.DestDir = strings.ToLower(strings.TrimSpace(cl.DestDir))
+	cl.Topic = strings.TrimSpace(cl.Topic)
 
 	// Strip file extension from filename if the LLM included it.
 	cl.Filename = strings.TrimSpace(cl.Filename)

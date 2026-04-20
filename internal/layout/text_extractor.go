@@ -8,14 +8,27 @@ import (
 	"strings"
 )
 
+// codeExtensions lists source/config file types that are readable as plain text.
+// These are routed through ExtractPlainText rather than the PDF extractor.
+var codeExtensions = map[string]bool{
+	".tf": true, ".hcl": true,
+	".go": true, ".rb": true, ".py": true, ".rs": true,
+	".js": true, ".ts": true,
+	".sh": true, ".bash": true,
+	".yaml": true, ".yml": true, ".json": true, ".toml": true,
+	".sql": true,
+}
+
 // Extract dispatches to the correct extractor based on file extension.
-// For .md files it uses ExtractMarkdown; for .txt it uses ExtractPlainText;
-// for everything else it delegates to ExtractPDF (Python/PyMuPDF).
+// Markdown → ExtractMarkdown (heading-aware, section tree).
+// Plain text and code/config files → ExtractPlainText.
+// Everything else → ExtractPDF (Python/PyMuPDF).
 func Extract(path string) ([]Span, error) {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".md":
+	ext := strings.ToLower(filepath.Ext(path))
+	switch {
+	case ext == ".md":
 		return ExtractMarkdown(path)
-	case ".txt":
+	case ext == ".txt" || codeExtensions[ext]:
 		return ExtractPlainText(path)
 	default:
 		return extractPDFSpans(path)

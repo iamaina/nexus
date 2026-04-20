@@ -14,8 +14,9 @@ import (
 	"sync"
 )
 
-// Logger is the global logger instance initialized by Init.
-var Logger *slog.Logger
+// Logger is the global logger instance. Defaults to a warn-level stderr
+// logger so callers are safe before Init is called (e.g. during app startup).
+var Logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 // ANSI colour codes.
 const (
@@ -54,7 +55,6 @@ func Init(levelStr string) {
 		lvl = slog.LevelError
 	default:
 		lvl = slog.LevelInfo
-		Warn(context.Background(), "Invalid log level, defaulting to info", slog.String("given", levelStr))
 	}
 
 	opts := &slog.HandlerOptions{Level: lvl}

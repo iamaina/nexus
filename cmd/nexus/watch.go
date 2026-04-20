@@ -12,29 +12,49 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/config"
 	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/logger"
+	"github.com/iamaina/nexus/internal/models"
+	"github.com/iamaina/nexus/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// settleDelay is how long we wait after a CREATE/WRITE event before processing.
-// Files copied from a browser or phone are written in chunks; we need the
-// write to finish before we read the content.
-const settleDelay = 3 * time.Second
+// Settle delays and scan intervals.
+const (
+	settleDelay     = 3 * time.Second  // personal files: wait for write to finish
+	repoSettleDelay = 10 * time.Second // new repo dir: wait for clone to complete
+	sourceScanTick  = 5 * time.Minute  // how often to re-scan watched sources
+	gdocSyncTick    = 30 * time.Minute // how often to re-sync registered Google Docs
+)
 
-// watchedExtensions are the file types processed automatically by the watcher.
+// watchedExtensions are the file types processed by the personal intake watcher.
 var watchedExtensions = map[string]bool{
 	".pdf": true,
 	".md":  true,
 	".txt": true,
 }
 
+// watchAction classifies what should happen when an event fires in a directory.
+type watchAction int
+
+const (
+	actionPersonalFile watchAction = iota // classify → move → ingest
+	actionWorkspace                       // regenerate dir_structure.md
+	actionRepoRoot                        // detect new .git dirs (Phase 4 prep)
+)
+
+var watchList bool
+
 var watchCmd = &cobra.Command{
 	Use:   "watch",
-	Short: "Automatically organise and index new files dropped in watched folders",
-	Long: `Watch the directories configured under personal.watchDirs in config.yaml.
-When a supported file (.pdf, .md, .txt) is created, nexus automatically
-classifies it, moves it to PersonalDocs/<category>/, and ingests it.
+	Short: "Automatically organise, index, and monitor your workspace",
+	Long: `Watch multiple directory types concurrently:
+
+  personal.watchDirs  — classify and file new documents (PDF, MD, TXT)
+  sources with watch:true — re-scan for new/changed files every 5 minutes
+  roots.workspace     — regenerate workspace structure snapshot on changes
+  roots.repos[watch]  — detect newly cloned repositories
 
 Press Ctrl+C to stop watching.`,
 	Run: func(cmd *cobra.Command, _ []string) {
@@ -46,9 +66,8 @@ Press Ctrl+C to stop watching.`,
 			return
 		}
 
-		dirs := a.Config.Personal.WatchDirs
-		if len(dirs) == 0 {
-			logger.Error(ctx, "No watch directories configured — add personal.watchDirs to config.yaml")
+		if watchList {
+			printWatchList(a)
 			return
 		}
 
@@ -59,27 +78,101 @@ Press Ctrl+C to stop watching.`,
 		}
 		defer func() { _ = watcher.Close() }()
 
-		watching := 0
-		for _, dir := range dirs {
+		// watchedDirs maps each watched directory to its purpose so the event
+		// loop can route events without a chain of string comparisons.
+		watchedDirs := make(map[string]watchAction)
+
+		// 1. Personal intake directories.
+		personalDirs := a.Config.Personal.WatchDirs
+		watchCount := 0
+		for _, dir := range personalDirs {
 			if err := watcher.Add(dir); err != nil {
 				logger.Warn(ctx, "Cannot watch directory",
 					slog.String("dir", dir),
 					slog.Any("err", err))
 				continue
 			}
-			logger.Info(ctx, "Watching directory", slog.String("dir", dir))
-			watching++
+			watchedDirs[dir] = actionPersonalFile
+			logger.Info(ctx, "Watching personal dir", slog.String("dir", dir))
+			watchCount++
 		}
-		if watching == 0 {
-			logger.Error(ctx, "No directories could be watched — check that watchDirs exist")
+
+		// 2. Workspace structural watch (non-recursive — top-level dir events only).
+		workspaceRoot := a.Config.Roots.Workspace
+		if workspaceRoot != "" {
+			if err := watcher.Add(workspaceRoot); err != nil {
+				logger.Warn(ctx, "Cannot watch workspace root",
+					slog.String("dir", workspaceRoot),
+					slog.Any("err", err))
+			} else {
+				watchedDirs[workspaceRoot] = actionWorkspace
+				logger.Info(ctx, "Watching workspace root", slog.String("dir", workspaceRoot))
+				watchCount++
+			}
+		}
+
+		// 3. Repo root watches (non-recursive — detect newly cloned repos).
+		repoRootNames := make(map[string]string) // path → root name for logging
+		for _, root := range a.Config.Roots.Repos {
+			if !root.Watch {
+				continue
+			}
+			if err := watcher.Add(root.Path); err != nil {
+				logger.Warn(ctx, "Cannot watch repo root",
+					slog.String("root", root.Name),
+					slog.String("dir", root.Path),
+					slog.Any("err", err))
+				continue
+			}
+			watchedDirs[root.Path] = actionRepoRoot
+			repoRootNames[root.Path] = root.Name
+			logger.Info(ctx, "Watching repo root",
+				slog.String("root", root.Name),
+				slog.String("dir", root.Path))
+			watchCount++
+		}
+
+		if watchCount == 0 && len(a.Config.Sources) == 0 {
+			logger.Error(ctx, "Nothing to watch — configure personal.watchDirs or sources with watch:true")
 			return
 		}
 
-		fmt.Printf("\n  Watching %d director(ies). Press Ctrl+C to stop.\n\n", watching)
+		// 4. Source tickers: one goroutine per source marked watch:true.
+		tickerCount := 0
+		for _, src := range a.Config.Sources {
+			if !src.Watch {
+				continue
+			}
+			src := src // capture for goroutine
+			go startSourceTicker(ctx, a, src)
+			tickerCount++
+			logger.Info(ctx, "Source ticker started",
+				slog.String("source", src.Name),
+				slog.Duration("interval", sourceScanTick))
+		}
 
-		// pending tracks settle timers per file path to debounce rapid WRITE events.
-		// mu guards pending — the map is written by the main loop and deleted by
-		// AfterFunc callbacks, which run in separate goroutines.
+		// 5. Initial workspace snapshot — run once at startup so the DB is current.
+		if workspaceRoot != "" {
+			go func() {
+				regenerateWorkspaceSnapshot(context.Background(), a, workspaceRoot)
+			}()
+		}
+
+		// 6. Google Docs sync ticker — only starts if credentials are configured.
+		gdocCount := 0
+		if a.Config.Gdoc.CredentialsPath != "" {
+			docs, _ := a.Gdocs.List(ctx)
+			gdocCount = len(docs)
+			if gdocCount > 0 {
+				go startGdocTicker(ctx, a)
+			}
+		}
+
+		fmt.Printf("\n  Watching %d director(ies), %d source ticker(s)%s. Press Ctrl+C to stop.\n\n",
+			watchCount, tickerCount, gdocSuffix(gdocCount))
+
+		// pending tracks debounce timers per path.
+		// mu guards pending — AfterFunc callbacks run in separate goroutines.
 		pending := make(map[string]*time.Timer)
 		var mu sync.Mutex
 
@@ -89,30 +182,48 @@ Press Ctrl+C to stop watching.`,
 				if !ok {
 					return
 				}
-				if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
-					continue
-				}
-				path := event.Name
-				if !watchedExtensions[strings.ToLower(filepath.Ext(path))] {
+				if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove) == 0 {
 					continue
 				}
 
-				// Debounce: reset the timer on every write so we only process
-				// once the file has stopped changing.
-				mu.Lock()
-				if t, exists := pending[path]; exists {
-					t.Stop()
+				parentDir := filepath.Dir(event.Name)
+				action, known := watchedDirs[parentDir]
+				if !known {
+					continue
 				}
-				filePath := path // capture for closure
-				pending[filePath] = time.AfterFunc(settleDelay, func() {
-					mu.Lock()
-					delete(pending, filePath)
-					mu.Unlock()
-					// Each file gets its own background context so a slow
-					// classification doesn't block the watcher loop.
-					processWatchedFile(context.Background(), a, filePath)
-				})
-				mu.Unlock()
+
+				switch action {
+				case actionPersonalFile:
+					// Only process Create/Write of supported file types.
+					if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
+						continue
+					}
+					if !watchedExtensions[strings.ToLower(filepath.Ext(event.Name))] {
+						continue
+					}
+					debounce(&mu, pending, event.Name, settleDelay, func(path string) {
+						processWatchedFile(context.Background(), a, path)
+					})
+
+				case actionWorkspace:
+					// Skip events caused by our own snapshot write to avoid a feedback loop.
+					if filepath.Base(event.Name) == "dir_structure.md" {
+						continue
+					}
+					debounce(&mu, pending, workspaceRoot+"/_snapshot", settleDelay, func(_ string) {
+						regenerateWorkspaceSnapshot(context.Background(), a, workspaceRoot)
+					})
+
+				case actionRepoRoot:
+					// Only care about new directories being created.
+					if event.Op&fsnotify.Create == 0 {
+						continue
+					}
+					rootName := repoRootNames[parentDir]
+					debounce(&mu, pending, event.Name, repoSettleDelay, func(path string) {
+						checkNewRepo(context.Background(), a, rootName, path)
+					})
+				}
 
 			case watchErr, ok := <-watcher.Errors:
 				if !ok {
@@ -127,11 +238,28 @@ Press Ctrl+C to stop watching.`,
 	},
 }
 
-// processWatchedFile runs classify → move → ingest for a file detected by the
-// watcher. Errors are logged but never fatal — the watcher keeps running.
+// debounce resets or creates a settle timer for key. When the timer fires,
+// fn is called with path. Safe for concurrent use.
+func debounce(mu *sync.Mutex, pending map[string]*time.Timer, key string, delay time.Duration, fn func(string)) {
+	mu.Lock()
+	if t, exists := pending[key]; exists {
+		t.Stop()
+	}
+	k := key // capture for closure
+	pending[key] = time.AfterFunc(delay, func() {
+		mu.Lock()
+		delete(pending, k)
+		mu.Unlock()
+		fn(k)
+	})
+	mu.Unlock()
+}
+
+// processWatchedFile runs classify → move → ingest for a personal intake file.
+// Errors are logged but never fatal — the watcher keeps running.
 func processWatchedFile(ctx context.Context, a *app.Application, path string) {
 	if _, err := os.Stat(path); err != nil {
-		// File may have been moved or deleted before the settle timer fired.
+		// File moved or deleted before the settle timer fired.
 		return
 	}
 
@@ -150,6 +278,242 @@ func processWatchedFile(ctx context.Context, a *app.Application, path string) {
 		cl.DocType, cl.Language, filepath.Base(result.DestPath))
 }
 
+// regenerateWorkspaceSnapshot generates dir_structure.md and ingests it.
+func regenerateWorkspaceSnapshot(ctx context.Context, a *app.Application, workspaceRoot string) {
+	outPath, err := workspace.WriteTo(workspaceRoot)
+	if err != nil {
+		logger.Warn(ctx, "workspace: snapshot generation failed", slog.Any("err", err))
+		return
+	}
+	if _, err := ingestion.IngestFile(ctx, a, outPath, "workspace-structure", true, nil); err != nil {
+		logger.Warn(ctx, "workspace: ingest failed", slog.Any("err", err))
+		return
+	}
+	logger.Info(ctx, "workspace.snapshot_updated", slog.String("path", outPath))
+	fmt.Printf("  ✓ Workspace snapshot updated: %s\n", outPath)
+}
+
+// checkNewRepo checks if path is a newly cloned git repo, logs it, and
+// registers it in the database via the Repos model.
+func checkNewRepo(ctx context.Context, a *app.Application, rootName, path string) {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+		return
+	}
+
+	logger.Info(ctx, "repo.detected",
+		slog.String("root", rootName),
+		slog.String("path", path))
+	fmt.Printf("  → New repo detected in %s: %s\n", rootName, filepath.Base(path))
+
+	// Register in DB so nexus repo check can find it immediately.
+	remote := repoNormaliseRemote(repoGitRun(ctx, path, "remote", "get-url", "origin"))
+	repoType := repoTypeFromName(rootName)
+	if err := a.Repos.Upsert(ctx, models.Repo{
+		Path:      path,
+		RemoteURL: remote,
+		Platform:  detectPlatform(remote),
+		RepoType:  repoType,
+		RootName:  rootName,
+	}); err != nil {
+		logger.Warn(ctx, "repo.register_failed",
+			slog.String("path", path),
+			slog.Any("err", err))
+	}
+}
+
+// startSourceTicker runs an immediate scan of src then re-scans every
+// sourceScanTick interval. Stops when ctx is cancelled.
+func startSourceTicker(ctx context.Context, a *app.Application, src config.Source) {
+	scanSource(ctx, a, src)
+
+	ticker := time.NewTicker(sourceScanTick)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			scanSource(ctx, a, src)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// scanSource walks src.Path and calls IngestFile for each matching file.
+// Unchanged files are skipped via hash-based dedup in IngestFile.
+func scanSource(ctx context.Context, a *app.Application, src config.Source) {
+	var ingested, skipped int
+
+	err := filepath.WalkDir(src.Path, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		// Skip paths matching any exclude pattern.
+		for _, excl := range src.Exclude {
+			if strings.Contains(path, excl) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		for _, e := range src.Extensions {
+			if ext != strings.ToLower(e) {
+				continue
+			}
+			ok, err := ingestion.IngestFile(ctx, a, path, src.Name, false, nil)
+			if err != nil {
+				logger.Warn(ctx, "source.scan_error",
+					slog.String("source", src.Name),
+					slog.String("file", path),
+					slog.Any("err", err))
+				return nil
+			}
+			if ok {
+				ingested++
+			} else {
+				skipped++
+			}
+			break
+		}
+		return nil
+	})
+
+	if err != nil {
+		logger.Warn(ctx, "source.scan_walk_error",
+			slog.String("source", src.Name),
+			slog.Any("err", err))
+	}
+
+	if ingested > 0 {
+		logger.Info(ctx, "source.scan_done",
+			slog.String("source", src.Name),
+			slog.Int("ingested", ingested),
+			slog.Int("skipped", skipped))
+	}
+}
+
+// startGdocTicker syncs all registered Google Docs immediately then every gdocSyncTick.
+func startGdocTicker(ctx context.Context, a *app.Application) {
+	syncAllGdocs(ctx, a)
+
+	ticker := time.NewTicker(gdocSyncTick)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			syncAllGdocs(ctx, a)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// syncAllGdocs re-fetches and re-ingests all registered Google Docs.
+func syncAllGdocs(ctx context.Context, a *app.Application) {
+	if a.Config.Gdoc.CredentialsPath == "" {
+		return
+	}
+	docs, err := a.Gdocs.List(ctx)
+	if err != nil {
+		logger.Warn(ctx, "gdoc.sync_list_failed", "err", err)
+		return
+	}
+	for _, d := range docs {
+		if err := syncGdoc(ctx, a, d); err != nil {
+			logger.Warn(ctx, "gdoc.sync_failed", "name", d.Name, "err", err)
+		} else {
+			logger.Info(ctx, "gdoc.synced", "name", d.Name)
+		}
+	}
+}
+
+// gdocSuffix formats the Google Docs count for the startup message.
+func gdocSuffix(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d Google Doc(s)", n)
+}
+
+// printWatchList shows what nexus watch would monitor without starting.
+func printWatchList(a *app.Application) {
+	home, _ := os.UserHomeDir()
+	display := func(p string) string { return strings.Replace(p, home, "~", 1) }
+
+	fmt.Println()
+	fmt.Println("  nexus watch — configured watchers")
+	fmt.Println()
+
+	fmt.Println("  Personal intake (classify → file → ingest on new file):")
+	for _, d := range a.Config.Personal.WatchDirs {
+		fmt.Printf("    %s\n", display(d))
+	}
+
+	fmt.Println()
+	fmt.Println("  Source tickers (re-ingest on change, every 5 min):")
+	tickers := 0
+	for _, src := range a.Config.Sources {
+		if src.Watch {
+			fmt.Printf("    %-20s  %s\n", src.Name, display(src.Path))
+			tickers++
+		}
+	}
+	if tickers == 0 {
+		fmt.Println("    (none — set watch: true on a source to enable)")
+	}
+
+	fmt.Println()
+	fmt.Println("  Workspace snapshot (regenerate dir_structure.md on structural change):")
+	if ws := a.Config.Roots.Workspace; ws != "" {
+		fmt.Printf("    %s\n", display(ws))
+	} else {
+		fmt.Println("    (none — set roots.workspace in config to enable)")
+	}
+
+	fmt.Println()
+	fmt.Println("  Repo roots (detect newly cloned repos):")
+	repoWatches := 0
+	for _, r := range a.Config.Roots.Repos {
+		if r.Watch {
+			fmt.Printf("    %-20s  %s\n", r.Name, display(r.Path))
+			repoWatches++
+		}
+	}
+	if repoWatches == 0 {
+		fmt.Println("    (none — set watch: true on a repo root to enable)")
+	}
+
+	fmt.Println()
+	fmt.Println("  Google Docs (re-sync every 30 min):")
+	if a.Config.Gdoc.CredentialsPath != "" {
+		docs, err := a.Gdocs.List(context.Background())
+		if err != nil || len(docs) == 0 {
+			fmt.Println("    (none — add one with: nexus gdoc add <url> --name <name>)")
+		} else {
+			for _, d := range docs {
+				fmt.Printf("    %-20s  %s\n", d.Name, d.DocID)
+			}
+		}
+	} else {
+		fmt.Println("    (not configured — set gdoc.credentialsPath in config.yaml)")
+	}
+	fmt.Println()
+}
+
 func init() {
+	watchCmd.Flags().BoolVar(&watchList, "list", false, "print configured watchers without starting")
 	RootCmd.AddCommand(watchCmd)
 }

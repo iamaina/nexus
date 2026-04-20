@@ -273,6 +273,16 @@ func MergeLists(blocks []Block) []Block {
 	return result
 }
 
+// MergeNodeLists walks the node tree and merges consecutive list-item paragraphs
+// within each node's Blocks slice. This must be called AFTER AttachBlocks so that
+// list merging is scoped per-section rather than across section boundaries.
+func MergeNodeLists(nodes []*Node) {
+	for _, n := range nodes {
+		n.Blocks = MergeLists(n.Blocks)
+		MergeNodeLists(n.Children)
+	}
+}
+
 func isTOCLine(text string) bool {
 	text = strings.TrimSpace(text)
 

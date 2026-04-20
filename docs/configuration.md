@@ -5,7 +5,7 @@
 Override the path with the global flag:
 
 ```bash
-nexus --config /path/to/config.yaml query "..."
+nexus --config /path/to/config.yaml
 ```
 
 ---
@@ -52,17 +52,29 @@ Directories that `nexus ingest` reads from. Each entry has three fields:
 | `path` | yes | Absolute or `~`-expanded path to a directory of documents |
 | `extensions` | yes | List of file extensions to process (`.pdf`, `.md`, `.txt`) |
 
+**All source fields:**
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Short identifier used in `--source` filters and displayed in results |
+| `path` | yes | Absolute or `~`-expanded path to a directory of documents |
+| `extensions` | yes | List of file extensions to process (`.pdf`, `.md`, `.txt`) |
+| `watch` | no | If `true`, `nexus watch` re-ingests new/changed files in this source automatically |
+| `exclude` | no | List of path substrings to skip (matched against file path) |
+
 **Multiple sources:** you can have as many sources as you want. A common setup:
 
 ```yaml
 sources:
-  - name: books        # technical books, programming references
+  - name: books
     path: ~/Documents/knowledge-drop
     extensions: [.pdf, .md, .txt]
-  - name: runbooks     # team runbooks and ops docs
+  - name: runbooks
     path: ~/ops-nexus/runbooks
     extensions: [.md]
-  - name: personal     # this is populated by nexus file / nexus watch
+    watch: true                        # re-ingest on file change
+    exclude: [archive, _draft]         # skip paths containing these strings
+  - name: personal     # populated by nexus organise / nexus watch
     path: ~/Documents/PersonalDocs
     extensions: [.pdf, .md, .txt]
 ```
@@ -70,13 +82,13 @@ sources:
 **Notes:**
 - Subdirectories are walked recursively
 - `nexus ingest` skips files whose SHA-256 hash hasn't changed since last ingest
-- The `name` field is stored with each chunk, enabling `nexus query --source books`
+- The `name` field is stored with each chunk, enabling `nexus --source books`
 
 ---
 
 ## `personal`
 
-Controls the automatic document filing pipeline (`nexus file` and `nexus watch`).
+Controls the automatic document filing pipeline (`nexus organise` and `nexus watch`).
 
 | Field | Required | Description |
 |---|---|---|
@@ -132,7 +144,7 @@ export PG_PASSWORD=$(op item get "Local Postgres - opsnexus vaultuser" --fields 
 | `baseURL` | `http://localhost:11434` | Ollama server URL |
 | `embeddingModel` | `mxbai-embed-large` | Model for embedding text (document chunks and queries) |
 | `generationModel` | `llama3.1:8b` | Model for generating answers |
-| `classificationModel` | `qwen2.5:7b` | Model for classifying documents in `nexus file` / `nexus watch` |
+| `classificationModel` | `qwen2.5:7b` | Model for classifying documents in `nexus organise` / `nexus watch` |
 
 All three models must be pulled before use. `make setup` does this automatically.
 
@@ -221,3 +233,53 @@ All log output goes to **stderr**. Answers and table output go to **stdout**. Th
 nexus query "..." > answer.txt      # captures only the answer
 nexus query "..." 2>/dev/null       # suppresses all logging
 ```
+
+---
+
+## `roots`
+
+Defines your workspace root and typed repository roots. Required for `nexus watch` workspace snapshots and `nexus repo` commands.
+
+```yaml
+roots:
+  workspace: ~/ops-nexus            # top-level directory nexus treats as your workspace
+
+  repos:
+    - name: work                    # identifier (used in nexus repo list)
+      path: ~/ops-nexus/active-ops/gitlab-work
+      hosts: [gitlab.com]           # hostname substring — used to match clone URLs
+      watch: true                   # detect newly cloned repos via nexus watch
+
+    - name: personal-github
+      path: ~/ops-nexus/repos/personal/github
+      hosts: [github.com]
+      watch: true
+
+    - name: personal-gitlab
+      path: ~/ops-nexus/repos/personal/gitlab
+      hosts: [gitlab.com]
+      watch: true
+```
+
+**`roots.workspace`** — `nexus watch` generates `dir_structure.md` here whenever the workspace directory structure changes (new/removed directories). This file is ingested as source `workspace-structure` and is queryable.
+
+**`roots.repos`** — used by `nexus repo check <url>` to infer clone locations from existing repo patterns. `hosts` is matched as a substring against the clone URL's hostname to select the right root.
+
+---
+
+## `gdoc`
+
+Required for the `nexus gdoc` commands. Set up once; token is cached automatically.
+
+```yaml
+gdoc:
+  credentialsPath: ~/path/to/credentials.json   # OAuth2 client credentials from Google Cloud
+  syncDir: ~/.local/share/nexus/gdocs            # where fetched docs are saved as Markdown
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `credentialsPath` | yes (for gdoc) | Path to Google Cloud OAuth2 Desktop credentials JSON |
+| `syncDir` | no | Directory for cached Markdown copies (default: `~/.local/share/nexus/gdocs`) |
+
+Run `nexus gdoc auth` once after adding credentials — it opens a browser for consent and saves the token to `~/.config/nexus/gdoc_token.json`.
