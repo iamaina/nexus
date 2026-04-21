@@ -102,6 +102,49 @@ nexus ingest --force
 
 ---
 
+## `nexus ingest-url`
+
+Fetches a web page (or an entire docs site), extracts structured content, and ingests it into the search index. The URL is the document identity — unchanged pages are skipped automatically on re-run.
+
+```bash
+nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/
+nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive
+nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --dry-run
+nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --source chef-knife-docs --delay 300ms
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--recursive` | false | Follow all links within the same URL path prefix |
+| `--depth int` | 0 | Max crawl depth (0 = unlimited; 1 = seed + directly linked pages) |
+| `--delay duration` | none | Pause between requests, e.g. `200ms`, `1s` — polite crawling |
+| `--source string` | derived from host | Source name for query filtering (e.g. `--source chef-knife-docs`) |
+| `--dry-run` | false | Show every URL that would be ingested without touching the database |
+| `--force` | false | Re-ingest even when content hash is unchanged |
+
+**Config-based URL sources** — add to `config.yaml` and they run with `nexus ingest` and `nexus watch`:
+
+```yaml
+urls:
+  - name: chef-knife-docs
+    url: https://docs.chef.io/workstation/26/tools/knife/
+    recursive: true
+    depth: 0          # unlimited within the path prefix
+    watch: true       # nexus watch re-checks on interval
+    interval: 24h     # polling interval (default: 24h)
+    delay: 300ms      # pause between requests
+```
+
+**Querying ingested web sources:**
+
+```bash
+nexus query "how do I use knife ssh to run a command on a node" --source chef-knife-docs
+```
+
+---
+
 ## `nexus organise`
 
 Classifies documents, shows a plan of where each file will go, and moves + ingests on confirmation. Replaces `nexus file`.
