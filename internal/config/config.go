@@ -57,12 +57,25 @@ type GdocConfig struct {
 	SyncDir         string `yaml:"syncDir"`         // where fetched docs are saved as .md files
 }
 
+// URLSource represents a web URL (or a docs site to crawl) that nexus ingests
+// and optionally re-checks on a schedule.
+type URLSource struct {
+	Name      string `yaml:"name"`      // source label used in nexus query results
+	URL       string `yaml:"url"`       // seed URL to fetch
+	Recursive bool   `yaml:"recursive"` // if true, follow links within the same path prefix
+	Depth     int    `yaml:"depth"`     // max crawl depth (0 = unlimited)
+	Watch     bool   `yaml:"watch"`     // if true, nexus watch re-checks on Interval
+	Interval  string `yaml:"interval"`  // polling interval, e.g. "24h", "6h" (default: "24h")
+	Delay     string `yaml:"delay"`     // pause between requests, e.g. "200ms", "1s" (default: none)
+}
+
 // Config is the fully resolved application configuration.
 type Config struct {
-	Sources  []Source   `yaml:"sources"`
-	Personal Personal   `yaml:"personal"`
-	Roots    Roots      `yaml:"roots"` // workspace OS layer — optional, safe to omit
-	Gdoc     GdocConfig `yaml:"gdoc"`  // Google Docs integration — optional, safe to omit
+	Sources  []Source    `yaml:"sources"`
+	URLs     []URLSource `yaml:"urls"` // web URLs / docs sites to ingest — optional
+	Personal Personal    `yaml:"personal"`
+	Roots    Roots       `yaml:"roots"` // workspace OS layer — optional, safe to omit
+	Gdoc     GdocConfig  `yaml:"gdoc"`  // Google Docs integration — optional, safe to omit
 	Postgres struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"postgres"`

@@ -21,6 +21,7 @@ var codeExtensions = map[string]bool{
 
 // Extract dispatches to the correct extractor based on file extension.
 // Markdown → ExtractMarkdown (heading-aware, section tree).
+// HTML → ExtractHTMLFile (heading-aware, strips nav/footer noise).
 // Plain text and code/config files → ExtractPlainText.
 // Everything else → ExtractPDF (Python/PyMuPDF).
 func Extract(path string) ([]Span, error) {
@@ -28,11 +29,23 @@ func Extract(path string) ([]Span, error) {
 	switch {
 	case ext == ".md":
 		return ExtractMarkdown(path)
+	case ext == ".html" || ext == ".htm":
+		return ExtractHTMLFile(path)
 	case ext == ".txt" || codeExtensions[ext]:
 		return ExtractPlainText(path)
 	default:
 		return extractPDFSpans(path)
 	}
+}
+
+// ExtractHTMLFile opens a local HTML file and delegates to ExtractHTML.
+func ExtractHTMLFile(path string) ([]Span, error) {
+	f, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return ExtractHTML(f)
 }
 
 // ExtractMarkdown converts a Markdown file into []Span, assigning synthetic

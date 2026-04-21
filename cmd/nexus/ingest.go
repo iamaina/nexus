@@ -105,6 +105,22 @@ var ingestCmd = &cobra.Command{
 			}
 		}
 
+		// Ingest URL sources configured in config.yaml.
+		for _, u := range a.Config.URLs {
+			count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), force, false)
+			if err != nil {
+				logger.Error(ctx, "url.source_failed",
+					slog.String("component", "ingestion"),
+					slog.String("event", "url.source_failed"),
+					slog.String("source", u.Name),
+					slog.String("url", u.URL),
+					slog.Any("err", err))
+				failed++
+				continue
+			}
+			processed += count
+		}
+
 		logger.Info(ctx, "ingestion.complete",
 			slog.String("component", "ingestion"),
 			slog.String("event", "ingestion.complete"),

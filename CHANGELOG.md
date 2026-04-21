@@ -11,6 +11,19 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Web page ingestion (`nexus ingest-url`)**
+- `nexus ingest-url <url>` — fetch a web page, extract its content, and ingest it into the search index; the URL is the document identity for dedup (unchanged pages skipped on re-run)
+- `--recursive` — crawl all pages within the same URL path prefix; each page fetched once and reused for both ingestion and link discovery (no double-fetch)
+- `--depth <n>` — limit crawl depth (0 = unlimited); depth 1 = seed + directly linked pages, depth 2 = one level further
+- `--delay <duration>` — pause between requests (e.g. `300ms`, `1s`) for polite crawling; respects `ctx.Done()` so Ctrl+C exits cleanly mid-crawl
+- `--dry-run` — show every URL that would be ingested without touching the database
+- `--source <name>` — custom source name for query filtering; defaults to the URL host
+- `--force` — re-ingest even when content hash is unchanged
+- `internal/layout/html.go` — `ExtractHTML(r io.Reader)` walks the HTML tree, maps `h1–h6` to synthetic font sizes (same convention as Markdown), skips `nav`/`header`/`footer`/`aside`/`script`; `ExtractLinks` returns all `<a href>` values for the crawler
+- `internal/layout/text_extractor.go` — `.html` / `.htm` dispatch added to `Extract()` so locally-saved HTML files are also ingestable via `nexus ingest`
+- Malformed link guard: paths containing `//` after the first character are rejected — prevents broken doc-site hrefs (e.g. `https//github.com/...`) from producing junk URLs
+- `urls:` config section — declare web sources in `config.yaml` with `name`, `url`, `recursive`, `depth`, `watch`, `interval`, `delay`; `nexus ingest` processes all configured URL sources; `nexus watch` polls each `watch: true` URL source on its interval (default 24h)
+
 **Chat interface**
 - `nexus` (bare command) now starts an interactive chat session — no subcommand needed
 - Sessions stream token-by-token with a braille spinner during retrieval
