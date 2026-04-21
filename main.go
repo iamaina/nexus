@@ -23,7 +23,8 @@ func main() {
 	logger.Version = nexus.Version
 
 	// Skip DB/Ollama init for commands that don't need the app.
-	skipInit := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "help") ||
+	// setup-reconfigure loads config directly and needs no DB or Ollama connection.
+	skipInit := len(os.Args) > 1 && (os.Args[1] == "completion" || os.Args[1] == "help" || os.Args[1] == "setup-reconfigure") ||
 		func() bool {
 			for _, arg := range os.Args[1:] {
 				if arg == "--version" || arg == "-V" || arg == "--help" || arg == "-h" {

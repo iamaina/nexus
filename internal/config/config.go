@@ -71,6 +71,7 @@ type URLSource struct {
 
 // Config is the fully resolved application configuration.
 type Config struct {
+	cfgPath  string      // not exported — set by Load, used by Save
 	Sources  []Source    `yaml:"sources"`
 	URLs     []URLSource `yaml:"urls"` // web URLs / docs sites to ingest — optional
 	Personal Personal    `yaml:"personal"`
@@ -113,11 +114,35 @@ func Load(cfgPath string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
+	cfg.cfgPath = cfgPath // remember for Save()
+
 	if err := cfg.resolve(); err != nil {
 		return nil, err
 	}
 
 	return &cfg, nil
+}
+
+// ConfigPath returns the file path this Config was loaded from.
+// Returns an empty string if the config was not loaded via Load.
+func (c *Config) ConfigPath() string { return c.cfgPath }
+
+// Save writes the current configuration back to the file it was loaded from.
+// Comments and hand-written formatting are not preserved — the file is fully
+// re-marshaled from the in-memory struct. Inform the user before calling this
+// so they are not surprised to lose comments.
+func (c *Config) Save() error {
+	if c.cfgPath == "" {
+		return fmt.Errorf("config path not set — was this Config loaded via config.Load?")
+	}
+	data, err := marshalYAML(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(c.cfgPath, data, 0o600); err != nil { //nolint:gosec
+		return fmt.Errorf("write config %s: %w", c.cfgPath, err)
+	}
+	return nil
 }
 
 // resolve expands ~ in path fields and substitutes ${PG_PASSWORD}.

@@ -87,6 +87,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Setup and configuration (Phase 5)**
+- `nexus source scan` — reads `dir_structure.md`, groups repos by parent directory, proposes each group as a nexus source; interactive: prompts for name per group, confirms before writing config.yaml; `--dry-run` shows groups without modifying anything
+- `nexus setup-reconfigure` — menu-driven config editor: [1] Models (Balanced/Recommended/Large/Custom tier selection), [2] Sources (list + remove), [3] Database (DSN update); runs without DB or Ollama
+- `make setup-reconfigure` — Makefile shortcut for `nexus setup-reconfigure`
+- `make setup` model tier selection updated: Balanced (~3.5 GB), Recommended (~4.6 GB), Large (~10 GB) — generation and classification model both configurable per tier
+- App.go fallback defaults updated to Recommended tier (`llama3.2:3b` + `qwen2.5:3b`)
+- `config.Save()` — new method that marshals the in-memory `*Config` back to the file it was loaded from
+- `workspace.ParseRepos` / `workspace.GroupByDirectory` — parse `dir_structure.md` to extract repo entries and group them by parent directory
+
 **Mode 3 — Workspace OS (Phase 4)**
 - `nexus repo scan` — walks all configured repo roots, discovers git repositories, and upserts them into a new `repos` table; run once after setup, then `nexus watch` keeps it current
 - `nexus repo list` — lists all registered repositories grouped by root with live branch and dirty status
