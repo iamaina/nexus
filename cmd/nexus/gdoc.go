@@ -26,7 +26,9 @@ Prerequisites:
   1. Create a Google Cloud project and enable the Google Docs API.
   2. Create OAuth 2.0 credentials (Desktop app type) and download credentials.json.
   3. Add the credentials path to config.yaml under gdoc.credentialsPath.
-  4. Run: nexus gdoc auth`,
+  4. Run: nexus gdoc auth
+
+Since: v0.1.0`,
 }
 
 var gdocAuthCmd = &cobra.Command{

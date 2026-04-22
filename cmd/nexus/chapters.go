@@ -15,7 +15,14 @@ import (
 var chaptersCmd = &cobra.Command{
 	Use:   "chapters <name-or-path-fragment>",
 	Short: "Browse chapters of an ingested book or long document",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `List the top-level chapters of any ingested book or long document.
+
+Match by filename fragment or source name:
+  nexus chapters progit
+  nexus chapters "kubernetes-handbook"
+
+Since: v0.0.1`,
+	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 

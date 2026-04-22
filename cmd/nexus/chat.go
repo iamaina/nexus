@@ -502,7 +502,7 @@ func init() {
 	RootCmd.Flags().StringVar(&chatModel, "model", "", "generation model (overrides config)")
 	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
 	RootCmd.Flags().StringVar(&chatSource, "source", "", "restrict search to a source or filename")
-	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work)")
+	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work) (added v0.2.0)")
 }
 
 // ── File helpers ──────────────────────────────────────────────────────────────

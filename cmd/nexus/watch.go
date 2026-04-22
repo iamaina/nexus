@@ -57,7 +57,9 @@ var watchCmd = &cobra.Command{
   roots.workspace     — regenerate workspace structure snapshot on changes
   roots.repos[watch]  — detect newly cloned repositories
 
-Press Ctrl+C to stop watching.`,
+Press Ctrl+C to stop watching.
+
+Since: v0.0.1  (workspace OS layer added v0.1.0)`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 

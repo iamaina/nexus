@@ -36,7 +36,9 @@ Examples:
   nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --source chef-knife-docs
 
   # Limit crawl to 2 levels deep
-  nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --depth 2`,
+  nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --depth 2
+
+Since: v0.2.0`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rawURL := args[0]
