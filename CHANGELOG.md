@@ -87,6 +87,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Source categories — setup and reconfigure integration**
+- `make setup` now prompts for URL sources during initial setup: URL, name, category, `search_by_default` (default yes), recursive crawl; writes a `urls:` section to `config.yaml`
+- `nexus setup-reconfigure` Sources menu [2] rewritten: shows all sources (file + URL) with their `category` and `search_by_default` values; select a number to edit these fields or prefix with `r` to remove; editing toggles `search_by_default` or sets a category without re-running setup
+
 **Source categories and default search control**
 - `search_by_default: false` on any `sources:` or `urls:` entry — that source is excluded from all queries unless explicitly requested with `--source <name>`; use this for large reference sources like Wikipedia that would otherwise dominate results
 - `category: <name>` on sources — logical group label (e.g. `reference`, `work`, `personal`)

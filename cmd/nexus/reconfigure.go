@@ -125,48 +125,208 @@ func reconfigureModels(cfg *config.Config, readline func(string) string) error {
 
 // ── Sources ──────────────────────────────────────────────────────────────────
 
+// reconfigureSources shows all configured sources (file + URL) and allows
+// editing search_by_default / category, or removing a source.
 func reconfigureSources(cfg *config.Config, readline func(string) string) {
-	if len(cfg.Sources) == 0 {
-		fmt.Println("\n  No sources configured. Use 'nexus source scan' to discover repo directories.")
+	total := len(cfg.Sources) + len(cfg.URLs)
+	if total == 0 {
+		fmt.Println("\n  No sources configured.")
+		fmt.Println("  Use 'nexus source scan' to discover repo directories,")
+		fmt.Println("  or 'nexus ingest-url <url>' to add a web source.")
 		return
 	}
 
-	fmt.Printf("\n  Configured sources (%d):\n\n", len(cfg.Sources))
-	for i, s := range cfg.Sources {
-		fmt.Printf("    [%d] %-20s  %s\n", i+1, s.Name, s.Path)
+	for {
+		fmt.Printf("\n  Configured sources — %d file, %d URL\n\n", len(cfg.Sources), len(cfg.URLs))
+
+		idx := 1
+		// File sources
+		if len(cfg.Sources) > 0 {
+			fmt.Println("  File sources:")
+			for _, s := range cfg.Sources {
+				searchLabel := ""
+				if !s.IsSearchDefault() {
+					searchLabel = "  search_by_default: false"
+				}
+				catLabel := ""
+				if s.Category != "" {
+					catLabel = fmt.Sprintf("  category: %s", s.Category)
+				}
+				fmt.Printf("    [%d] %-20s  %s%s%s\n", idx, s.Name, s.Path, catLabel, searchLabel)
+				idx++
+			}
+		}
+		// URL sources
+		if len(cfg.URLs) > 0 {
+			fmt.Println("  URL sources:")
+			for _, u := range cfg.URLs {
+				searchLabel := ""
+				if !u.IsSearchDefault() {
+					searchLabel = "  search_by_default: false"
+				}
+				catLabel := ""
+				if u.Category != "" {
+					catLabel = fmt.Sprintf("  category: %s", u.Category)
+				}
+				fmt.Printf("    [%d] %-20s  %s%s%s\n", idx, u.Name, u.URL, catLabel, searchLabel)
+				idx++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println("  Enter a number to edit (category / search_by_default).")
+		fmt.Printf("  Prefix with 'r' to remove (e.g. r2). Press Enter to go back.\n\n")
+
+		choice := readline("  Select: ")
+		if choice == "" {
+			return
+		}
+
+		remove := false
+		if strings.HasPrefix(choice, "r") || strings.HasPrefix(choice, "R") {
+			remove = true
+			choice = choice[1:]
+		}
+
+		var n int
+		if _, err := fmt.Sscanf(choice, "%d", &n); err != nil || n < 1 || n >= idx {
+			fmt.Printf("  Invalid selection: %q\n", choice)
+			continue
+		}
+		n-- // 0-based
+
+		// Determine whether it's a file or URL source.
+		if n < len(cfg.Sources) {
+			// File source
+			if remove {
+				removedName := cfg.Sources[n].Name
+				removedPath := cfg.Sources[n].Path
+				confirm := readline(fmt.Sprintf("  Remove file source %q (%s)? [Y/n]: ", removedName, removedPath))
+				if confirm != "" && !strings.HasPrefix(strings.ToLower(confirm), "y") {
+					fmt.Println("  Cancelled.")
+					continue
+				}
+				cfg.Sources = append(cfg.Sources[:n], cfg.Sources[n+1:]...)
+				if err := cfg.Save(); err != nil {
+					fmt.Printf("  Error saving config: %v\n", err)
+					continue
+				}
+				fmt.Printf("  ✅  Removed source %q.\n", removedName)
+				fmt.Printf("  Note: ingested documents remain in DB. To purge:\n")
+				fmt.Printf("    DELETE FROM documents WHERE source_name = '%s';\n", removedName)
+			} else {
+				editFileSource(cfg, n, readline)
+			}
+		} else {
+			// URL source
+			urlIdx := n - len(cfg.Sources)
+			if remove {
+				removedName := cfg.URLs[urlIdx].Name
+				removedURL := cfg.URLs[urlIdx].URL
+				confirm := readline(fmt.Sprintf("  Remove URL source %q (%s)? [Y/n]: ", removedName, removedURL))
+				if confirm != "" && !strings.HasPrefix(strings.ToLower(confirm), "y") {
+					fmt.Println("  Cancelled.")
+					continue
+				}
+				cfg.URLs = append(cfg.URLs[:urlIdx], cfg.URLs[urlIdx+1:]...)
+				if err := cfg.Save(); err != nil {
+					fmt.Printf("  Error saving config: %v\n", err)
+					continue
+				}
+				fmt.Printf("  ✅  Removed URL source %q.\n", removedName)
+				fmt.Printf("  Note: ingested documents remain in DB. To purge:\n")
+				fmt.Printf("    DELETE FROM documents WHERE source_name = '%s';\n", removedName)
+			} else {
+				editURLSource(cfg, urlIdx, readline)
+			}
+		}
 	}
+}
+
+func editFileSource(cfg *config.Config, idx int, readline func(string) string) {
+	s := &cfg.Sources[idx]
+	currentDefault := s.IsSearchDefault()
+	fmt.Printf("\n  Editing file source: %s (%s)\n", s.Name, s.Path)
+	fmt.Printf("    category:          %q\n", s.Category)
+	fmt.Printf("    search_by_default: %v\n\n", currentDefault)
+
+	fmt.Println("  [1] Toggle search_by_default")
+	fmt.Println("  [2] Set category")
+	fmt.Println("  [Enter] Done")
 	fmt.Println()
-	fmt.Println("  Enter a number to remove a source, or press Enter to go back.")
-	fmt.Println("  (To add sources, run: nexus source scan)")
-	fmt.Println()
 
-	choice := readline("  Remove source number [Enter to cancel]: ")
-	if choice == "" {
+	choice := readline("  Select [1-2 or Enter]: ")
+	switch choice {
+	case "1":
+		if currentDefault {
+			f := false
+			s.SearchByDefault = &f
+			fmt.Println("  search_by_default → false (excluded from default search)")
+		} else {
+			t := true
+			s.SearchByDefault = &t
+			fmt.Println("  search_by_default → true (included in default search)")
+		}
+	case "2":
+		cat := readline(fmt.Sprintf("  Category [%s]: ", s.Category))
+		if cat != "" {
+			s.Category = cat
+		}
+	case "":
+		return
+	default:
+		fmt.Printf("  Unknown option %q\n", choice)
 		return
 	}
 
-	idx := 0
-	if _, err := fmt.Sscanf(choice, "%d", &idx); err != nil || idx < 1 || idx > len(cfg.Sources) {
-		fmt.Printf("  Invalid selection: %q\n", choice)
-		return
-	}
-	idx-- // convert to 0-based
-
-	removed := cfg.Sources[idx]
-	confirm := readline(fmt.Sprintf("  Remove source %q (%s)? [Y/n]: ", removed.Name, removed.Path))
-	if confirm != "" && !strings.HasPrefix(strings.ToLower(confirm), "y") {
-		fmt.Println("  Cancelled.")
-		return
-	}
-
-	cfg.Sources = append(cfg.Sources[:idx], cfg.Sources[idx+1:]...)
 	if err := cfg.Save(); err != nil {
 		fmt.Printf("  Error saving config: %v\n", err)
 		return
 	}
-	fmt.Printf("  ✅  Removed source %q.\n", removed.Name)
-	fmt.Println("  Note: existing ingested documents from this source remain in the DB.")
-	fmt.Println("  To remove them: DELETE FROM documents WHERE source_name = '" + removed.Name + "';")
+	fmt.Println("  ✅  Saved.")
+}
+
+func editURLSource(cfg *config.Config, idx int, readline func(string) string) {
+	u := &cfg.URLs[idx]
+	currentDefault := u.IsSearchDefault()
+	fmt.Printf("\n  Editing URL source: %s (%s)\n", u.Name, u.URL)
+	fmt.Printf("    category:          %q\n", u.Category)
+	fmt.Printf("    search_by_default: %v\n\n", currentDefault)
+
+	fmt.Println("  [1] Toggle search_by_default")
+	fmt.Println("  [2] Set category")
+	fmt.Println("  [Enter] Done")
+	fmt.Println()
+
+	choice := readline("  Select [1-2 or Enter]: ")
+	switch choice {
+	case "1":
+		if currentDefault {
+			f := false
+			u.SearchByDefault = &f
+			fmt.Println("  search_by_default → false (excluded from default search)")
+		} else {
+			t := true
+			u.SearchByDefault = &t
+			fmt.Println("  search_by_default → true (included in default search)")
+		}
+	case "2":
+		cat := readline(fmt.Sprintf("  Category [%s]: ", u.Category))
+		if cat != "" {
+			u.Category = cat
+		}
+	case "":
+		return
+	default:
+		fmt.Printf("  Unknown option %q\n", choice)
+		return
+	}
+
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("  Error saving config: %v\n", err)
+		return
+	}
+	fmt.Println("  ✅  Saved.")
 }
 
 // ── Database ─────────────────────────────────────────────────────────────────
