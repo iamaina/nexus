@@ -157,6 +157,25 @@ func (m *DocumentModel) DeleteByPath(ctx context.Context, filePath string) error
 	return err
 }
 
+// CountBySource returns the document count and total chunk count for a source.
+func (m *DocumentModel) CountBySource(ctx context.Context, sourceName string) (docCount, chunkCount int, err error) {
+	err = m.DB.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM documents WHERE source_name = $1`,
+		sourceName,
+	).Scan(&docCount, &chunkCount)
+	return
+}
+
+// DeleteBySource removes all documents (and their chunks via CASCADE) for a source.
+// Returns the number of documents deleted.
+func (m *DocumentModel) DeleteBySource(ctx context.Context, sourceName string) (int64, error) {
+	tag, err := m.DB.Exec(ctx, `DELETE FROM documents WHERE source_name = $1`, sourceName)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // Insert upserts document metadata and returns the document ID.
 // meta may be nil for batch ingestion; when provided the classification
 // columns (doc_type, language, institution, doc_date) are stored too.

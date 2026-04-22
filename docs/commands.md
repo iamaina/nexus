@@ -96,6 +96,7 @@ nexus ingest --force
 | Flag | Default | Description |
 |---|---|---|
 | `--force` | false | Re-ingest every file, ignoring the SHA-256 dedup check |
+| `--background` | false | Run ingest detached from the terminal; returns immediately and logs to `~/.config/nexus/logs/ingest.log` |
 
 **Deduplication:** nexus computes a SHA-256 hash of every file before processing. If the hash matches what's stored in the database, the file is skipped. `--force` bypasses this. If the same file content exists at a different path, nexus logs a warning and skips the duplicate.
 
@@ -459,6 +460,24 @@ nexus source status
 | Last Ingest | Timestamp of most recent ingest (format: `YYYY-MM-DD HH:MI`) |
 | Watch | Re-ingest interval if `watch: true` (e.g. `5m`, `24h`); `—` if not watched |
 | Visibility | `opt-in` if `search_by_default: false`; blank if included in default search |
+
+### `nexus source rm`
+
+Removes all ingested documents and chunks for a named source from the database. The source entry in `config.yaml` is not touched — only the indexed data is deleted.
+
+```bash
+nexus source rm Wikipedia
+```
+
+```
+  Source:  Wikipedia
+  Docs:    493
+  Chunks:  15,246
+
+  This will permanently delete all indexed content for "Wikipedia".
+  Continue? [y/N] y
+  ✓ Removed 493 doc(s) and their chunks for source "Wikipedia".
+```
 
 ---
 
