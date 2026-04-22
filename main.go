@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"fmt"
 
 	"github.com/iamaina/nexus/cmd/nexus"
 	"github.com/iamaina/nexus/internal/app"
@@ -15,6 +16,7 @@ import (
 )
 
 func main() {
+	fmt.Println("Starting Nexus...")
 	// Forward the build-time version into the logger so JSON logs carry the correct version.
 	logger.Version = nexus.Version
 

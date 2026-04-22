@@ -76,7 +76,7 @@ func Load(cfgPath string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve home dir: %w", err)
 		}
-		cfgPath = filepath.Join(home, "ops-nexus/nexus", "config.yaml")
+		cfgPath = filepath.Join(home, "workspace/personal/nexus", "config.yaml")
 	}
 
 	data, err := os.ReadFile(cfgPath) //nolint:gosec // cfgPath is always our controlled config.yaml

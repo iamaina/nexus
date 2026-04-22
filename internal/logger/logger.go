@@ -15,8 +15,7 @@ import (
 )
 
 // Logger is the global logger instance initialized by Init.
-var Logger *slog.Logger
-
+var Logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 // ANSI colour codes.
 const (
 	ansiReset  = "\033[0m"
