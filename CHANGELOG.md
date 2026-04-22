@@ -87,6 +87,9 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Bug fixes**
+- Background jobs (`nexus ingest --background`, `nexus ingest-url --background`) now default to `info` log level — inheriting `logLevel: debug` from config produced unreadably large log files; override with `NEXUS_LOG_LEVEL=debug` in the shell if verbose output is needed
+
 **`nexus source rm` — remove a source from the index**
 - `nexus source rm <name>` — shows doc count and chunk count for the named source, asks for confirmation, then deletes all its documents and chunks from the database; source entry in `config.yaml` is not touched
 - `DocumentModel.CountBySource` — returns doc count and total chunk count for a source in one query

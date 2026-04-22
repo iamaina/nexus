@@ -38,9 +38,18 @@ func startBackground(label, logFile string) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 
+	// Default background jobs to info level — the config may have debug set,
+	// which makes logs unreadably large. The user can still override by setting
+	// NEXUS_LOG_LEVEL=debug explicitly in their shell before running the command.
+	env := os.Environ()
+	if os.Getenv("NEXUS_LOG_LEVEL") == "" {
+		env = append(env, "NEXUS_LOG_LEVEL=info")
+	}
+
 	bgCmd := exec.Command(exe, args...) //nolint:gosec
 	bgCmd.Stdout = f
 	bgCmd.Stderr = f
+	bgCmd.Env = env
 	bgCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := bgCmd.Start(); err != nil {
