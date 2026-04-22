@@ -10,11 +10,19 @@ import (
 
 // Source represents a configured source of documents to ingest.
 type Source struct {
-	Name       string   `yaml:"name"`
-	Path       string   `yaml:"path"`
-	Extensions []string `yaml:"extensions"`
-	Exclude    []string `yaml:"exclude"` // path substrings to skip (directories or files)
-	Watch      bool     `yaml:"watch"`   // if true, nexus watch re-ingests files on change
+	Name            string   `yaml:"name"`
+	Path            string   `yaml:"path"`
+	Extensions      []string `yaml:"extensions"`
+	Exclude         []string `yaml:"exclude"`           // path substrings to skip (directories or files)
+	Watch           bool     `yaml:"watch"`             // if true, nexus watch re-ingests files on change
+	SearchByDefault *bool    `yaml:"search_by_default"` // nil/true = included in all queries; false = opt-in only
+	Category        string   `yaml:"category"`          // logical group, e.g. "reference", "work", "personal"
+}
+
+// IsSearchDefault reports whether this source is included in queries by default.
+// Returns true when search_by_default is omitted (nil) or explicitly true.
+func (s Source) IsSearchDefault() bool {
+	return s.SearchByDefault == nil || *s.SearchByDefault
 }
 
 // Personal holds configuration for the personal document safe (Mode 1).
@@ -60,13 +68,20 @@ type GdocConfig struct {
 // URLSource represents a web URL (or a docs site to crawl) that nexus ingests
 // and optionally re-checks on a schedule.
 type URLSource struct {
-	Name      string `yaml:"name"`      // source label used in nexus query results
-	URL       string `yaml:"url"`       // seed URL to fetch
-	Recursive bool   `yaml:"recursive"` // if true, follow links within the same path prefix
-	Depth     int    `yaml:"depth"`     // max crawl depth (0 = unlimited)
-	Watch     bool   `yaml:"watch"`     // if true, nexus watch re-checks on Interval
-	Interval  string `yaml:"interval"`  // polling interval, e.g. "24h", "6h" (default: "24h")
-	Delay     string `yaml:"delay"`     // pause between requests, e.g. "200ms", "1s" (default: none)
+	Name            string `yaml:"name"`              // source label used in nexus query results
+	URL             string `yaml:"url"`               // seed URL to fetch
+	Recursive       bool   `yaml:"recursive"`         // if true, follow links within the same path prefix
+	Depth           int    `yaml:"depth"`             // max crawl depth (0 = unlimited)
+	Watch           bool   `yaml:"watch"`             // if true, nexus watch re-checks on Interval
+	Interval        string `yaml:"interval"`          // polling interval, e.g. "24h", "6h" (default: "24h")
+	Delay           string `yaml:"delay"`             // pause between requests, e.g. "200ms", "1s" (default: none)
+	SearchByDefault *bool  `yaml:"search_by_default"` // nil/true = included by default; false = opt-in only
+	Category        string `yaml:"category"`          // logical group, e.g. "reference"
+}
+
+// IsSearchDefault reports whether this URL source is included in queries by default.
+func (u URLSource) IsSearchDefault() bool {
+	return u.SearchByDefault == nil || *u.SearchByDefault
 }
 
 // Config is the fully resolved application configuration.

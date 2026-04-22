@@ -115,9 +115,10 @@ func (iw *indentWriter) Write(p []byte) (int, error) {
 // ── Command vars ─────────────────────────────────────────────────────────────
 
 var (
-	chatModel  string
-	chatNoLive bool
-	chatSource string
+	chatModel    string
+	chatNoLive   bool
+	chatSource   string
+	chatCategory string
 )
 
 // ── Shared completions helper ─────────────────────────────────────────────────
@@ -328,7 +329,7 @@ loop:
 				continue
 			}
 
-			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, chatSource)
+			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSource, chatCategory))
 			if err != nil {
 				stop()
 				if ctx.Err() != nil {
@@ -501,6 +502,7 @@ func init() {
 	RootCmd.Flags().StringVar(&chatModel, "model", "", "generation model (overrides config)")
 	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
 	RootCmd.Flags().StringVar(&chatSource, "source", "", "restrict search to a source or filename")
+	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work)")
 }
 
 // ── File helpers ──────────────────────────────────────────────────────────────

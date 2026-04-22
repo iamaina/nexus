@@ -87,6 +87,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Source categories and default search control**
+- `search_by_default: false` on any `sources:` or `urls:` entry — that source is excluded from all queries unless explicitly requested with `--source <name>`; use this for large reference sources like Wikipedia that would otherwise dominate results
+- `category: <name>` on sources — logical group label (e.g. `reference`, `work`, `personal`)
+- `--category <name>` flag on `nexus query` and `nexus` (chat) — restrict search to sources in the named category
+- `SearchFilter` type in `internal/models` — replaces the bare `source string` parameter on `ChunkModel.Search`; carries source substring, include list (category), and exclude list (default exclusions) in a single struct; SQL built dynamically with positional placeholders — no interpolation of user values
+
 **Setup and configuration (Phase 5)**
 - `nexus source scan` — reads `dir_structure.md`, groups repos by parent directory, proposes each group as a nexus source; interactive: prompts for name per group, confirms before writing config.yaml; `--dry-run` shows groups without modifying anything
 - `nexus setup-reconfigure` — menu-driven config editor: [1] Models (Balanced/Recommended/Large/Custom tier selection), [2] Sources (list + remove), [3] Database (DSN update); runs without DB or Ollama

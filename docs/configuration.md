@@ -61,6 +61,8 @@ Directories that `nexus ingest` reads from. Each entry has three fields:
 | `extensions` | yes | List of file extensions to process (`.pdf`, `.md`, `.txt`) |
 | `watch` | no | If `true`, `nexus watch` re-ingests new/changed files in this source automatically |
 | `exclude` | no | List of path substrings to skip (matched against file path) |
+| `search_by_default` | no | If `false`, this source is excluded from all queries unless explicitly requested with `--source <name>` or `--category <name>`; omit (or set `true`) to include by default |
+| `category` | no | Logical group label (e.g. `reference`, `work`, `personal`) — used with `--category <name>` to restrict a query to one group |
 
 **Multiple sources:** you can have as many sources as you want. A common setup:
 
