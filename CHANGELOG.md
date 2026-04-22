@@ -89,6 +89,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 **Bug fixes**
 - Background jobs (`nexus ingest --background`, `nexus ingest-url --background`) now default to `info` log level — inheriting `logLevel: debug` from config produced unreadably large log files; override with `NEXUS_LOG_LEVEL=debug` in the shell if verbose output is needed
+- Chat: `--source <name>` with an un-ingested source no longer silently calls the LLM with empty context (which caused hallucinated answers citing training-data sources like "progit"); now prints `⚠ Source "<name>" has no indexed content — run: nexus ingest` and skips the LLM call
+- Chat: scroll region exit no longer jumps to the last terminal row, which left a screenful of blank lines after short sessions; the shell prompt now appears immediately after the session summary line
 
 **`nexus source rm` — remove a source from the index**
 - `nexus source rm <name>` — shows doc count and chunk count for the named source, asks for confirmation, then deletes all its documents and chunks from the database; source entry in `config.yaml` is not touched

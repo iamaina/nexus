@@ -246,9 +246,11 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
 		}
 		defer func() {
-			// Reset scroll region and park cursor at the last row so the
-			// returning shell prompt appears at the bottom, not mid-screen.
-			fmt.Printf("\033[r\033[%d;1H\n", rows)
+			// Reset scroll region. Do NOT jump to the last row — that leaves
+			// a screenful of blank lines between the session message and the
+			// shell prompt when the session was short. A plain \n is enough
+			// for the shell to place its prompt right after the last line.
+			fmt.Print("\033[r\n")
 		}()
 	}
 
@@ -336,6 +338,16 @@ loop:
 					break loop
 				}
 				fmt.Printf("  search error: %v\n\n", err)
+				continue
+			}
+
+			// If --source was given but the vector search returned nothing, the
+			// source almost certainly has no indexed content. Warn and skip the
+			// LLM call — otherwise the model hallucinates from training data.
+			if len(candidates) == 0 && chatSource != "" {
+				stop()
+				fmt.Printf("  %s⚠  Source %q has no indexed content — run: nexus ingest%s\n\n",
+					c.dim, chatSource, c.reset)
 				continue
 			}
 
