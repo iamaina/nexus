@@ -122,6 +122,34 @@ func (m *DocumentModel) Summary(ctx context.Context) ([]SourceSummary, error) {
 	return out, rows.Err()
 }
 
+// SourceStats returns per-source document count, chunk count, and most recent
+// ingest timestamp for every source that has at least one document in the DB.
+func (m *DocumentModel) SourceStats(ctx context.Context) ([]SourceStat, error) {
+	rows, err := m.DB.Query(ctx, `
+		SELECT
+			source_name,
+			COUNT(*)                                          AS doc_count,
+			COALESCE(SUM(chunk_count), 0)                    AS chunk_count,
+			TO_CHAR(MAX(ingest_time), 'YYYY-MM-DD HH24:MI')  AS last_ingest
+		FROM documents
+		GROUP BY source_name
+		ORDER BY source_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SourceStat
+	for rows.Next() {
+		var s SourceStat
+		if err := rows.Scan(&s.SourceName, &s.DocCount, &s.ChunkCount, &s.LastIngest); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // DeleteByPath removes a document and all its chunks (via CASCADE) by file path.
 // Returns nil if the document does not exist (idempotent).
 func (m *DocumentModel) DeleteByPath(ctx context.Context, filePath string) error {

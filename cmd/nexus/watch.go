@@ -364,18 +364,26 @@ func startURLTicker(ctx context.Context, a *app.Application, u config.URLSource)
 // pollURLSource re-ingests a URL source. Unchanged pages are skipped by
 // hash-based dedup inside CrawlAndIngest.
 func pollURLSource(ctx context.Context, a *app.Application, u config.URLSource) {
+	logger.Info(ctx, "url.poll_start",
+		slog.String("source", u.Name),
+		slog.String("url", u.URL))
+	fmt.Printf("  ⟳ Crawling %q (%s)…\n", u.Name, u.URL)
+
 	count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), false, false)
 	if err != nil {
 		logger.Warn(ctx, "url.poll_error",
 			slog.String("source", u.Name),
 			slog.Any("err", err))
+		fmt.Printf("  ✗ %q: crawl error — %v\n", u.Name, err)
 		return
 	}
 	if count > 0 {
 		logger.Info(ctx, "url.poll_done",
 			slog.String("source", u.Name),
 			slog.Int("ingested", count))
-		fmt.Printf("  ✓ URL source %q: %d page(s) updated\n", u.Name, count)
+		fmt.Printf("  ✓ %q: %d page(s) updated\n", u.Name, count)
+	} else {
+		fmt.Printf("  ✓ %q: up to date (no changes)\n", u.Name)
 	}
 }
 

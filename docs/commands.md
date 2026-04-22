@@ -422,6 +422,43 @@ nexus layout --fonts mybook.pdf
 
 Manage document sources — directories whose files nexus indexes for search.
 
+### `nexus source status`
+
+Shows all configured sources (file and URL) with per-source ingestion statistics. Sources that have not yet been ingested appear in the table with `—` counts so you can see at a glance what still needs indexing.
+
+```bash
+nexus source status
+```
+
+**Example output:**
+
+```
+  Source             Type  Docs      Chunks    Last Ingest       Watch   Visibility
+  ─────────────────  ────  ───────   ─────────  ────────────────  ──────  ──────────
+  books              file       47       1,832  2026-04-20 12:10  —
+  intelligence       file       12         398  2026-04-19 08:45  —
+  ops-notes          file        —          —   never             5m
+  runbooks           file       89       2,104  2026-04-21 10:30  5m
+  wikipedia          url        22         541  2026-04-18 14:00  —       opt-in
+  kubernetes         url         —          —   never             —       opt-in
+
+  Total: 170 docs · 4,875 chunks  ·  2 source(s) not yet ingested — run: nexus ingest
+```
+
+**Columns:**
+
+| Column | Description |
+|---|---|
+| Source | Source name as configured in `config.yaml` |
+| Type | `file` (local directory) or `url` (web source) |
+| Docs | Number of ingested documents (`—` = not yet ingested) |
+| Chunks | Total chunks stored in the vector index |
+| Last Ingest | Timestamp of most recent ingest (format: `YYYY-MM-DD HH:MI`) |
+| Watch | Re-ingest interval if `watch: true` (e.g. `5m`, `24h`); `—` if not watched |
+| Visibility | `opt-in` if `search_by_default: false`; blank if included in default search |
+
+---
+
 ### `nexus source scan`
 
 Reads `dir_structure.md` from the workspace root, groups git repositories by their parent

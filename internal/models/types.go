@@ -23,6 +23,15 @@ type SourceSummary struct {
 	ChunkCount int
 }
 
+// SourceStat holds detailed ingestion statistics for one source,
+// including the timestamp of the most recent ingest.
+type SourceStat struct {
+	SourceName string
+	DocCount   int
+	ChunkCount int
+	LastIngest *string // nil = never ingested; formatted as "YYYY-MM-DD HH:MI"
+}
+
 // DocMeta carries optional classification metadata written to the documents table.
 // It is nil for batch ingestion (nexus ingest) and populated by nexus file.
 type DocMeta struct {

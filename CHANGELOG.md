@@ -87,6 +87,23 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**`nexus source status` — ingestion status command**
+- `nexus source status` — shows all configured sources (file and URL) with per-source doc count, chunk count, last ingest timestamp, watch interval, and `opt-in` visibility flag
+- Sources in `config.yaml` that have not yet been ingested appear in the table with `—` counts so you can see at a glance what still needs indexing
+- Summary line: total docs · total chunks · count of sources not yet ingested with reminder to run `nexus ingest`
+- `SourceStat` type in `internal/models/types.go` — carries per-source stats with a nullable `*string LastIngest` (nil = never ingested)
+- `DocumentModel.SourceStats(ctx)` — aggregates doc count, chunk count, and most-recent ingest time per source in one SQL query
+
+**URL ticker progress logging**
+- `nexus watch` now logs `⟳ Crawling "<name>" (<url>)…` before each URL poll begins — previously the ticker was silent until completion
+- Shows `✓ "<name>": up to date (no changes)` when a crawl completes with zero new or updated pages (was previously silent)
+
+**SRE reference library in config.yaml**
+- 17 reference documentation URL sources added to `config.yaml`: `kubernetes`, `docker`, `terraform`, `prometheus`, `helm`, `golang`, `postgresql`, `nginx`, `vault`, `ansible`, `grafana`, `gitlab-ci`, `ruby`, `bash`, `linux-commands`, `opentelemetry`, `consul`
+- All set `search_by_default: false` and `category: reference` — opt-in via `--category reference` or `--source <name>`
+- `linux-commands` (GeeksforGeeks) includes `delay: 500ms` for polite crawling
+- Depths tuned per site: kubernetes depth 3, all others depth 1–2
+
 **Version annotations in command help**
 - Every command's `--help` output now shows `Since: vX.Y.Z` so it's clear which version introduced each command or flag
 - Flags added after a command's debut are annotated with `(added vX.Y.Z)` in their description
