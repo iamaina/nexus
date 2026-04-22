@@ -124,6 +124,9 @@ nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --
 | `--source string` | derived from host | Source name for query filtering (e.g. `--source chef-knife-docs`) |
 | `--dry-run` | false | Show every URL that would be ingested without touching the database |
 | `--force` | false | Re-ingest even when content hash is unchanged |
+| `--save` | false | Persist this source to `config.yaml` so `nexus ingest` and `nexus watch` pick it up automatically |
+| `--watch` | false | When used with `--save`, set `watch: true` so `nexus watch` polls this source on its interval |
+| `--background` | false | Run the crawl detached; returns immediately and logs to `~/.config/nexus/logs/ingest-url-<name>.log` |
 
 **Config-based URL sources** — add to `config.yaml` and they run with `nexus ingest` and `nexus watch`:
 

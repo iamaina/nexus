@@ -87,6 +87,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**`nexus ingest-url` — save and background flags**
+- `--save` — persists the URL source to `config.yaml` immediately (before the crawl begins) so `nexus ingest` and `nexus watch` pick it up automatically on future runs; upserts by name if the source already exists
+- `--watch` — when used with `--save`, sets `watch: true` on the saved source so `nexus watch` polls it on its interval
+- `--background` — re-execs the crawl detached from the terminal (`Setsid`); returns immediately and prints the PID and log path (`~/.config/nexus/logs/ingest-url-<name>.log`)
+- `--save` and `--background` compose: config is written synchronously before the child is launched, so the saved source is always consistent regardless of how the crawl ends
+
 **`nexus source status` — ingestion status command**
 - `nexus source status` — shows all configured sources (file and URL) with per-source doc count, chunk count, last ingest timestamp, watch interval, and `opt-in` visibility flag
 - Sources in `config.yaml` that have not yet been ingested appear in the table with `—` counts so you can see at a glance what still needs indexing
