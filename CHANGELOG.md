@@ -11,6 +11,19 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Web page ingestion (`nexus ingest-url`)**
+- `nexus ingest-url <url>` — fetch a web page, extract its content, and ingest it into the search index; the URL is the document identity for dedup (unchanged pages skipped on re-run)
+- `--recursive` — crawl all pages within the same URL path prefix; each page fetched once and reused for both ingestion and link discovery (no double-fetch)
+- `--depth <n>` — limit crawl depth (0 = unlimited); depth 1 = seed + directly linked pages, depth 2 = one level further
+- `--delay <duration>` — pause between requests (e.g. `300ms`, `1s`) for polite crawling; respects `ctx.Done()` so Ctrl+C exits cleanly mid-crawl
+- `--dry-run` — show every URL that would be ingested without touching the database
+- `--source <name>` — custom source name for query filtering; defaults to the URL host
+- `--force` — re-ingest even when content hash is unchanged
+- `internal/layout/html.go` — `ExtractHTML(r io.Reader)` walks the HTML tree, maps `h1–h6` to synthetic font sizes (same convention as Markdown), skips `nav`/`header`/`footer`/`aside`/`script`; `ExtractLinks` returns all `<a href>` values for the crawler
+- `internal/layout/text_extractor.go` — `.html` / `.htm` dispatch added to `Extract()` so locally-saved HTML files are also ingestable via `nexus ingest`
+- Malformed link guard: paths containing `//` after the first character are rejected — prevents broken doc-site hrefs (e.g. `https//github.com/...`) from producing junk URLs
+- `urls:` config section — declare web sources in `config.yaml` with `name`, `url`, `recursive`, `depth`, `watch`, `interval`, `delay`; `nexus ingest` processes all configured URL sources; `nexus watch` polls each `watch: true` URL source on its interval (default 24h)
+
 **Chat interface**
 - `nexus` (bare command) now starts an interactive chat session — no subcommand needed
 - Sessions stream token-by-token with a braille spinner during retrieval
@@ -73,6 +86,21 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `nexus watch --list` — prints all configured watchers (personal intake dirs, source tickers, workspace root, repo roots) without starting
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
+
+**Source categories and default search control**
+- `search_by_default: false` on any `sources:` or `urls:` entry — that source is excluded from all queries unless explicitly requested with `--source <name>`; use this for large reference sources like Wikipedia that would otherwise dominate results
+- `category: <name>` on sources — logical group label (e.g. `reference`, `work`, `personal`)
+- `--category <name>` flag on `nexus query` and `nexus` (chat) — restrict search to sources in the named category
+- `SearchFilter` type in `internal/models` — replaces the bare `source string` parameter on `ChunkModel.Search`; carries source substring, include list (category), and exclude list (default exclusions) in a single struct; SQL built dynamically with positional placeholders — no interpolation of user values
+
+**Setup and configuration (Phase 5)**
+- `nexus source scan` — reads `dir_structure.md`, groups repos by parent directory, proposes each group as a nexus source; interactive: prompts for name per group, confirms before writing config.yaml; `--dry-run` shows groups without modifying anything
+- `nexus setup-reconfigure` — menu-driven config editor: [1] Models (Balanced/Recommended/Large/Custom tier selection), [2] Sources (list + remove), [3] Database (DSN update); runs without DB or Ollama
+- `make setup-reconfigure` — Makefile shortcut for `nexus setup-reconfigure`
+- `make setup` model tier selection updated: Balanced (~3.5 GB), Recommended (~4.6 GB), Large (~10 GB) — generation and classification model both configurable per tier
+- App.go fallback defaults updated to Recommended tier (`llama3.2:3b` + `qwen2.5:3b`)
+- `config.Save()` — new method that marshals the in-memory `*Config` back to the file it was loaded from
+- `workspace.ParseRepos` / `workspace.GroupByDirectory` — parse `dir_structure.md` to extract repo entries and group them by parent directory
 
 **Mode 3 — Workspace OS (Phase 4)**
 - `nexus repo scan` — walks all configured repo roots, discovers git repositories, and upserts them into a new `repos` table; run once after setup, then `nexus watch` keeps it current

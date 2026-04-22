@@ -116,19 +116,21 @@ The `internal/layout/` package is the most complex. It implements the full docum
 ## Branching Model
 
 ```
-master          ──●─────────────────────●──────────────────────●──
-                 v0.0.1                v0.1.0                 v0.2.0
-                    \                     \
-stable/v0.1.0        ●──●──●──●──merge     \
-                                             stable/v0.2.0    ●──●──...
+master          ──●──────────────────────●──────────────────────●──
+                 v0.0.1                 v0.1.0                 v0.2.0
+                    \                      \
+stable/v0.1.0        ●──●──●──●──merge      \
+       ↓ (after merge, rename to maint/)     stable/v0.2.0    ●──●──...
+maint/v0.1.0   kept for backports only
 ```
 
 ### Rules
 
 - **`master`** — always stable. Only receives merges from a `stable/vX.Y.Z` branch. Never commit directly. Every merge is tagged automatically.
-- **`stable/vX.Y.Z`** — the single working branch for all work toward the next release. Created automatically by CI after each tag is pushed.
+- **`stable/vX.Y.Z`** — the single active working branch. Created automatically by CI in the same job that pushes the tag (same-job creation is required because GitHub suppresses cross-workflow triggers from `GITHUB_TOKEN`).
+- **`maint/vX.Y.Z`** — a merged stable branch renamed after release. Kept for backports only. Rename manually: `git push origin stable/vX.Y.Z:maint/vX.Y.Z && git push origin --delete stable/vX.Y.Z`.
 - **Feature branches** — branch off `stable/vX.Y.Z`, open a PR back into it when ready. Name them `feat/<description>` or `fix/<description>`. CI runs lint + build on every PR.
-- **One stable branch at a time.** When `stable/v0.1.0` merges to master and the `v0.1.0` tag is pushed, CI creates `stable/v0.2.0` automatically.
+- **One active stable branch at a time.** When `stable/v0.1.0` merges to master, CI creates `stable/v0.2.0` and the old branch is renamed to `maint/v0.1.0`.
 
 ### Feature branch flow
 

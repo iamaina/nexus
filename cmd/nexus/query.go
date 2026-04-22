@@ -19,6 +19,7 @@ import (
 var (
 	queryThreshold float64
 	querySource    string
+	queryCategory  string
 	queryModel     string
 	showSources    bool
 	noLive         bool
@@ -84,7 +85,7 @@ var queryCmd = &cobra.Command{
 
 		// Vector search
 		t = time.Now()
-		candidates, err := a.Chunks.Search(ctx, queryVec, 15, querySource)
+		candidates, err := a.Chunks.Search(ctx, queryVec, 15, buildSearchFilter(a.Config, querySource, queryCategory))
 		if err != nil {
 			logger.Error(ctx, "query.search_failed",
 				slog.String("component", "query"),
@@ -272,6 +273,7 @@ var queryCmd = &cobra.Command{
 func init() {
 	queryCmd.Flags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold (overrides config, default 0.70)")
 	queryCmd.Flags().StringVar(&querySource, "source", "", "restrict search to a source or filename (e.g. progit)")
+	queryCmd.Flags().StringVar(&queryCategory, "category", "", "restrict search to sources in this category (e.g. reference, work)")
 	queryCmd.Flags().StringVar(&queryModel, "model", "", "generation model to use (overrides config, e.g. llama3.1:8b)")
 	queryCmd.Flags().BoolVar(&showSources, "sources", false, "show retrieved source chunks before the answer")
 	queryCmd.Flags().BoolVar(&noLive, "no-live", false, "skip running registered live context sources")

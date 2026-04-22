@@ -10,11 +10,19 @@ import (
 
 // Source represents a configured source of documents to ingest.
 type Source struct {
-	Name       string   `yaml:"name"`
-	Path       string   `yaml:"path"`
-	Extensions []string `yaml:"extensions"`
-	Exclude    []string `yaml:"exclude"` // path substrings to skip (directories or files)
-	Watch      bool     `yaml:"watch"`   // if true, nexus watch re-ingests files on change
+	Name            string   `yaml:"name"`
+	Path            string   `yaml:"path"`
+	Extensions      []string `yaml:"extensions"`
+	Exclude         []string `yaml:"exclude"`           // path substrings to skip (directories or files)
+	Watch           bool     `yaml:"watch"`             // if true, nexus watch re-ingests files on change
+	SearchByDefault *bool    `yaml:"search_by_default"` // nil/true = included in all queries; false = opt-in only
+	Category        string   `yaml:"category"`          // logical group, e.g. "reference", "work", "personal"
+}
+
+// IsSearchDefault reports whether this source is included in queries by default.
+// Returns true when search_by_default is omitted (nil) or explicitly true.
+func (s Source) IsSearchDefault() bool {
+	return s.SearchByDefault == nil || *s.SearchByDefault
 }
 
 // Personal holds configuration for the personal document safe (Mode 1).
@@ -57,12 +65,33 @@ type GdocConfig struct {
 	SyncDir         string `yaml:"syncDir"`         // where fetched docs are saved as .md files
 }
 
+// URLSource represents a web URL (or a docs site to crawl) that nexus ingests
+// and optionally re-checks on a schedule.
+type URLSource struct {
+	Name            string `yaml:"name"`              // source label used in nexus query results
+	URL             string `yaml:"url"`               // seed URL to fetch
+	Recursive       bool   `yaml:"recursive"`         // if true, follow links within the same path prefix
+	Depth           int    `yaml:"depth"`             // max crawl depth (0 = unlimited)
+	Watch           bool   `yaml:"watch"`             // if true, nexus watch re-checks on Interval
+	Interval        string `yaml:"interval"`          // polling interval, e.g. "24h", "6h" (default: "24h")
+	Delay           string `yaml:"delay"`             // pause between requests, e.g. "200ms", "1s" (default: none)
+	SearchByDefault *bool  `yaml:"search_by_default"` // nil/true = included by default; false = opt-in only
+	Category        string `yaml:"category"`          // logical group, e.g. "reference"
+}
+
+// IsSearchDefault reports whether this URL source is included in queries by default.
+func (u URLSource) IsSearchDefault() bool {
+	return u.SearchByDefault == nil || *u.SearchByDefault
+}
+
 // Config is the fully resolved application configuration.
 type Config struct {
-	Sources  []Source   `yaml:"sources"`
-	Personal Personal   `yaml:"personal"`
-	Roots    Roots      `yaml:"roots"` // workspace OS layer — optional, safe to omit
-	Gdoc     GdocConfig `yaml:"gdoc"`  // Google Docs integration — optional, safe to omit
+	cfgPath  string      // not exported — set by Load, used by Save
+	Sources  []Source    `yaml:"sources"`
+	URLs     []URLSource `yaml:"urls"` // web URLs / docs sites to ingest — optional
+	Personal Personal    `yaml:"personal"`
+	Roots    Roots       `yaml:"roots"` // workspace OS layer — optional, safe to omit
+	Gdoc     GdocConfig  `yaml:"gdoc"`  // Google Docs integration — optional, safe to omit
 	Postgres struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"postgres"`
@@ -100,11 +129,35 @@ func Load(cfgPath string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
+	cfg.cfgPath = cfgPath // remember for Save()
+
 	if err := cfg.resolve(); err != nil {
 		return nil, err
 	}
 
 	return &cfg, nil
+}
+
+// ConfigPath returns the file path this Config was loaded from.
+// Returns an empty string if the config was not loaded via Load.
+func (c *Config) ConfigPath() string { return c.cfgPath }
+
+// Save writes the current configuration back to the file it was loaded from.
+// Comments and hand-written formatting are not preserved — the file is fully
+// re-marshaled from the in-memory struct. Inform the user before calling this
+// so they are not surprised to lose comments.
+func (c *Config) Save() error {
+	if c.cfgPath == "" {
+		return fmt.Errorf("config path not set — was this Config loaded via config.Load?")
+	}
+	data, err := marshalYAML(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(c.cfgPath, data, 0o600); err != nil { //nolint:gosec
+		return fmt.Errorf("write config %s: %w", c.cfgPath, err)
+	}
+	return nil
 }
 
 // resolve expands ~ in path fields and substitutes ${PG_PASSWORD}.

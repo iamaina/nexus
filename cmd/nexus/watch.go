@@ -26,6 +26,7 @@ const (
 	repoSettleDelay = 10 * time.Second // new repo dir: wait for clone to complete
 	sourceScanTick  = 5 * time.Minute  // how often to re-scan watched sources
 	gdocSyncTick    = 30 * time.Minute // how often to re-sync registered Google Docs
+	defaultURLTick  = 24 * time.Hour   // default polling interval for URL sources
 )
 
 // watchedExtensions are the file types processed by the personal intake watcher.
@@ -151,6 +152,21 @@ Press Ctrl+C to stop watching.`,
 				slog.Duration("interval", sourceScanTick))
 		}
 
+		// 4b. URL tickers: one goroutine per URL source marked watch:true.
+		urlTickerCount := 0
+		for _, u := range a.Config.URLs {
+			if !u.Watch {
+				continue
+			}
+			u := u // capture for goroutine
+			go startURLTicker(ctx, a, u)
+			urlTickerCount++
+			logger.Info(ctx, "URL ticker started",
+				slog.String("source", u.Name),
+				slog.String("url", u.URL),
+				slog.Duration("interval", parseURLInterval(u.Interval)))
+		}
+
 		// 5. Initial workspace snapshot — run once at startup so the DB is current.
 		if workspaceRoot != "" {
 			go func() {
@@ -168,8 +184,8 @@ Press Ctrl+C to stop watching.`,
 			}
 		}
 
-		fmt.Printf("\n  Watching %d director(ies), %d source ticker(s)%s. Press Ctrl+C to stop.\n\n",
-			watchCount, tickerCount, gdocSuffix(gdocCount))
+		fmt.Printf("\n  Watching %d director(ies), %d source ticker(s), %d URL ticker(s)%s. Press Ctrl+C to stop.\n\n",
+			watchCount, tickerCount, urlTickerCount, gdocSuffix(gdocCount))
 
 		// pending tracks debounce timers per path.
 		// mu guards pending — AfterFunc callbacks run in separate goroutines.
@@ -323,6 +339,55 @@ func checkNewRepo(ctx context.Context, a *app.Application, rootName, path string
 			slog.String("path", path),
 			slog.Any("err", err))
 	}
+}
+
+// startURLTicker polls a URL source immediately then re-polls at the configured
+// interval. Stops when ctx is cancelled.
+func startURLTicker(ctx context.Context, a *app.Application, u config.URLSource) {
+	pollURLSource(ctx, a, u)
+
+	ticker := time.NewTicker(parseURLInterval(u.Interval))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			pollURLSource(ctx, a, u)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// pollURLSource re-ingests a URL source. Unchanged pages are skipped by
+// hash-based dedup inside CrawlAndIngest.
+func pollURLSource(ctx context.Context, a *app.Application, u config.URLSource) {
+	count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), false, false)
+	if err != nil {
+		logger.Warn(ctx, "url.poll_error",
+			slog.String("source", u.Name),
+			slog.Any("err", err))
+		return
+	}
+	if count > 0 {
+		logger.Info(ctx, "url.poll_done",
+			slog.String("source", u.Name),
+			slog.Int("ingested", count))
+		fmt.Printf("  ✓ URL source %q: %d page(s) updated\n", u.Name, count)
+	}
+}
+
+// parseURLInterval converts a duration string (e.g. "6h", "24h") to a
+// time.Duration. Falls back to defaultURLTick if the string is empty or invalid.
+func parseURLInterval(s string) time.Duration {
+	if s == "" {
+		return defaultURLTick
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < time.Minute {
+		return defaultURLTick
+	}
+	return d
 }
 
 // startSourceTicker runs an immediate scan of src then re-scans every
@@ -494,6 +559,24 @@ func printWatchList(a *app.Application) {
 	}
 	if repoWatches == 0 {
 		fmt.Println("    (none — set watch: true on a repo root to enable)")
+	}
+
+	fmt.Println()
+	fmt.Println("  URL sources (re-fetch on interval, default 24h):")
+	urlWatches := 0
+	for _, u := range a.Config.URLs {
+		if u.Watch {
+			recursive := ""
+			if u.Recursive {
+				recursive = " [recursive]"
+			}
+			interval := parseURLInterval(u.Interval)
+			fmt.Printf("    %-20s  %s%s  every %s\n", u.Name, u.URL, recursive, interval)
+			urlWatches++
+		}
+	}
+	if urlWatches == 0 {
+		fmt.Println("    (none — add urls: entries with watch: true in config.yaml)")
 	}
 
 	fmt.Println()

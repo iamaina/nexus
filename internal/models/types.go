@@ -52,6 +52,23 @@ type Result struct {
 	Score      float64
 }
 
+// SearchFilter controls which sources are included or excluded from a vector
+// similarity search. It is constructed by the command layer from config defaults
+// and the user's explicit --source / --category flags.
+type SearchFilter struct {
+	// Source restricts results to documents whose source_name or file_path contains
+	// this string (case-insensitive). An explicit source bypasses ExcludeNames.
+	Source string
+
+	// ExcludeNames is a list of exact source names to skip.
+	// Populated from sources with search_by_default: false when Source is empty.
+	ExcludeNames []string
+
+	// IncludeNames restricts results to documents whose source_name is in this list.
+	// Used for --category filtering. Takes precedence over ExcludeNames.
+	IncludeNames []string
+}
+
 // ContextSource is a registered live context source — a shell command whose
 // output is injected into the query prompt at query time.
 type ContextSource struct {

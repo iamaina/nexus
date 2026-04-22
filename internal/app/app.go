@@ -104,11 +104,11 @@ func New(ctx context.Context, verbose bool) (*Application, error) {
 	}
 	genModel := cfg.Ollama.GenerationModel
 	if genModel == "" {
-		genModel = "llama3.1:8b"
+		genModel = "llama3.2:3b"
 	}
 	classifyModel := cfg.Ollama.ClassificationModel
 	if classifyModel == "" {
-		classifyModel = "qwen2.5:7b"
+		classifyModel = "qwen2.5:3b"
 	}
 
 	if err := checkOllama(ctx, ollamaURL); err != nil {

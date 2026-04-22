@@ -77,50 +77,68 @@ func (m *ChunkModel) StoreEmbeddings(ctx context.Context, docID int64, embedding
 }
 
 // Search performs a vector similarity search and returns the top results.
-// If source is non-empty, results are restricted to documents whose source_name
-// contains that string (case-insensitive), e.g. "progit" or "lets-go".
-func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, source string) ([]Result, error) {
-	var rows pgx.Rows
-	var err error
-
+// f.Source restricts by source_name/file_path substring.
+// f.IncludeNames restricts to exact source names (category filter).
+// f.ExcludeNames skips exact source names (search_by_default: false sources).
+// An explicit f.Source overrides f.ExcludeNames — the user asked for it explicitly.
+func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, f SearchFilter) ([]Result, error) {
 	vec := vectorToString(queryVec)
-	if source == "" {
-		rows, err = m.DB.Query(ctx, `
-			SELECT
-				c.document_id,
-				c.chunk_index,
-				COALESCE(c.section_level, 0),
-				d.file_path,
-				COALESCE(c.chapter, '') AS chapter,
-				c.chunk_text,
-				1 - (c.embedding <=> $1::vector) AS similarity
-			FROM chunks c
-			JOIN documents d ON c.document_id = d.id
-			WHERE c.embedding IS NOT NULL
-			ORDER BY c.embedding <=> $1::vector
-			LIMIT $2`,
-			vec, limit,
-		)
-	} else {
-		rows, err = m.DB.Query(ctx, `
-			SELECT
-				c.document_id,
-				c.chunk_index,
-				COALESCE(c.section_level, 0),
-				d.file_path,
-				COALESCE(c.chapter, '') AS chapter,
-				c.chunk_text,
-				1 - (c.embedding <=> $1::vector) AS similarity
-			FROM chunks c
-			JOIN documents d ON c.document_id = d.id
-			WHERE c.embedding IS NOT NULL
-			  AND (d.source_name ILIKE '%' || $3 || '%'
-			       OR d.file_path ILIKE '%' || $3 || '%')
-			ORDER BY c.embedding <=> $1::vector
-			LIMIT $2`,
-			vec, limit, source,
-		)
+
+	// $1 = query vector, $2 = limit; additional args appended below.
+	args := []any{vec, limit}
+	n := 2 // tracks the last $N placeholder used
+
+	where := "WHERE c.embedding IS NOT NULL"
+
+	// Source substring filter — user explicitly targeted one source.
+	// When set, ExcludeNames is bypassed (the user wants this source regardless).
+	if f.Source != "" {
+		n++
+		where += fmt.Sprintf(
+			" AND (d.source_name ILIKE '%%' || $%d || '%%' OR d.file_path ILIKE '%%' || $%d || '%%')",
+			n, n)
+		args = append(args, f.Source)
 	}
+
+	// Category filter: only include sources whose name is in this list.
+	if len(f.IncludeNames) > 0 {
+		ph := make([]string, len(f.IncludeNames))
+		for i, name := range f.IncludeNames {
+			n++
+			ph[i] = fmt.Sprintf("$%d", n)
+			args = append(args, name)
+		}
+		where += fmt.Sprintf(" AND d.source_name IN (%s)", strings.Join(ph, ","))
+	}
+
+	// Default exclusion: skip sources not included in default search.
+	// Only applied when the user has not specified an explicit source.
+	if f.Source == "" && len(f.ExcludeNames) > 0 {
+		ph := make([]string, len(f.ExcludeNames))
+		for i, name := range f.ExcludeNames {
+			n++
+			ph[i] = fmt.Sprintf("$%d", n)
+			args = append(args, name)
+		}
+		where += fmt.Sprintf(" AND d.source_name NOT IN (%s)", strings.Join(ph, ","))
+	}
+
+	q := fmt.Sprintf(`
+		SELECT
+			c.document_id,
+			c.chunk_index,
+			COALESCE(c.section_level, 0),
+			d.file_path,
+			COALESCE(c.chapter, '') AS chapter,
+			c.chunk_text,
+			1 - (c.embedding <=> $1::vector) AS similarity
+		FROM chunks c
+		JOIN documents d ON c.document_id = d.id
+		%s
+		ORDER BY c.embedding <=> $1::vector
+		LIMIT $2`, where)
+
+	rows, err := m.DB.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

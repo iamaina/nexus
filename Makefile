@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup setup-python reset-db lint build install ingest query layout dev cleanup all test watch-install watch-uninstall watch-restart
+.PHONY: help bootstrap setup setup-python setup-reconfigure reset-db lint build install ingest query layout dev cleanup all test watch-install watch-uninstall watch-restart
 
 help:
 	@echo "nexus Makefile"
@@ -18,6 +18,8 @@ help:
 	@echo "  make query question=\"...\" model=llama3.1:8b"
 	@echo ""
 	@echo "Maintenance:"
+	@echo "  make setup-reconfigure             → Update models, sources, or database DSN interactively"
+	@echo "  nexus source scan                  → Discover repo directories and add them as sources"
 	@echo "  make setup reconfigure=1           → Re-run setup and overwrite config.yaml"
 	@echo "  make reset-db                      → DROP all tables (loses all ingested data)"
 	@echo "  make lint                          → Run golangci-lint"
@@ -207,25 +209,29 @@ setup:
 	pg_isready -h localhost -p 5432 -q || { echo "❌ PostgreSQL did not restart. Check: brew services info postgresql@14"; exit 1; }
 
 	# Ollama models (ollama pull is idempotent — skips if already downloaded)
-	@echo "7. Ollama models — choose your generation model:"
-	@echo "   1) llama3.2:3b  — fast, ~2.0GB  (good for limited storage/bandwidth)"
-	@echo "   2) llama3.1:8b  — better answers, ~4.9GB  (recommended if you have the space)"
-	@echo "   Or type any Ollama model name (e.g. llama3.3:70b, mistral:7b)."
-	@read -p "   Generation model [llama3.1:8b]: " gen_choice; \
-	case "$$gen_choice" in \
-		1)   GEN_MODEL=llama3.2:3b ;; \
-		2|"") GEN_MODEL=llama3.1:8b ;; \
-		*)   GEN_MODEL=$$gen_choice ;; \
+	@echo "7. Ollama model tier — choose based on your available storage and performance needs:"
+	@echo "   1) Balanced     — llama3.2:3b + qwen2.5:1.5b  (~3.5 GB total, fastest)"
+	@echo "   2) Recommended  — llama3.2:3b + qwen2.5:3b    (~4.6 GB total, better accuracy)"
+	@echo "   3) Large        — llama3.1:8b + qwen2.5:7b    (~10 GB total, best quality)"
+	@echo "   4) Custom       — enter model names individually"
+	@read -p "   Model tier [2 = Recommended]: " tier_choice; \
+	case "$$tier_choice" in \
+		1)      GEN_MODEL=llama3.2:3b; CLS_MODEL=qwen2.5:1.5b ;; \
+		3)      GEN_MODEL=llama3.1:8b; CLS_MODEL=qwen2.5:7b ;; \
+		4)      read -p "   Generation model: " GEN_MODEL; \
+		        read -p "   Classification model: " CLS_MODEL ;; \
+		2|"")   GEN_MODEL=llama3.2:3b; CLS_MODEL=qwen2.5:3b ;; \
+		*)      GEN_MODEL=llama3.2:3b; CLS_MODEL=qwen2.5:3b ;; \
 	esac; \
 	echo "$$GEN_MODEL" > .ollama_gen_model; \
-	echo "qwen2.5:7b" > .ollama_class_model
+	echo "$$CLS_MODEL" > .ollama_class_model
 	@echo "   Starting downloads in the background — setup continues while models pull..."
 	@chmod +x scripts/pull_model.sh
-	@GEN=$$(cat .ollama_gen_model); \
+	@GEN=$$(cat .ollama_gen_model); CLS=$$(cat .ollama_class_model); \
 	mkdir -p ~/.config/nexus/models; \
 	bash scripts/pull_model.sh "$$GEN" > ~/.config/nexus/models/pull-gen.log 2>&1 & \
 	bash scripts/pull_model.sh mxbai-embed-large > ~/.config/nexus/models/pull-emb.log 2>&1 & \
-	bash scripts/pull_model.sh qwen2.5:7b > ~/.config/nexus/models/pull-cls.log 2>&1 & \
+	bash scripts/pull_model.sh "$$CLS" > ~/.config/nexus/models/pull-cls.log 2>&1 & \
 	true
 	@echo "   ✅ Downloads running in background."
 	@echo "      nexus shows live progress with ETA on first start."
@@ -373,6 +379,13 @@ setup:
 	@echo "   nexus watch                # auto-file new documents from ~/Downloads"
 	@echo ""
 	@echo "To reset ingested data (e.g. after changing embedding model): make reset-db"
+
+setup-reconfigure:
+	@if [ ! -f config.yaml ]; then \
+		echo "❌  config.yaml not found — run 'make setup' first."; \
+		exit 1; \
+	fi
+	go run . setup-reconfigure
 
 test:
 	go test ./...
