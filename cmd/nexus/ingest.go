@@ -19,6 +19,12 @@ var force bool
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
 	Short: "Index documents from your configured source folders",
+	Long: `Index documents from your configured source folders.
+
+Walks every source defined in config.yaml, hashes each file, and skips
+those whose content has not changed since the last ingest.
+
+Since: v0.0.1`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 

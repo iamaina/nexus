@@ -87,6 +87,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Version annotations in command help**
+- Every command's `--help` output now shows `Since: vX.Y.Z` so it's clear which version introduced each command or flag
+- Flags added after a command's debut are annotated with `(added vX.Y.Z)` in their description
+- Enables backport targeting: a bug in `--category` (added v0.2.0) only needs backporting to `maint/v0.2.0`, not `maint/v0.1.0`
+
 **Source categories — setup and reconfigure integration**
 - `make setup` now prompts for URL sources during initial setup: URL, name, category, `search_by_default` (default yes), recursive crawl; writes a `urls:` section to `config.yaml`
 - `nexus setup-reconfigure` Sources menu [2] rewritten: shows all sources (file + URL) with their `category` and `search_by_default` values; select a number to edit these fields or prefix with `r` to remove; editing toggles `search_by_default` or sets a category without re-running setup

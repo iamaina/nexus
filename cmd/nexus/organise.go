@@ -34,7 +34,9 @@ Examples:
   nexus organise ~/Downloads
   nexus organise ~/Downloads/kubernetes-handbook.pdf
   nexus organise --dry-run ~/Downloads
-  nexus organise                             # processes personal.watchDirs`,
+  nexus organise                             # processes personal.watchDirs
+
+Since: v0.1.0`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()

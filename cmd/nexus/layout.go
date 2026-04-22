@@ -38,7 +38,9 @@ Use flags to inspect specific stages:
   --sections  Section hierarchy
   --chunks    Final chunks (title, level, block count)
 
-Use --page-from / --page-to to narrow output to a page range.`,
+Use --page-from / --page-to to narrow output to a page range.
+
+Since: v0.0.1`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()

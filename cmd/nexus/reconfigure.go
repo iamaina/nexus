@@ -19,7 +19,9 @@ var reconfigureCmd = &cobra.Command{
 	Long: `Opens a menu to update individual sections of config.yaml without
 re-running the full 'make setup'. Changes are applied immediately.
 
-Does not require the database or Ollama to be running.`,
+Does not require the database or Ollama to be running.
+
+Since: v0.1.0  (URL source editing added v0.2.0)`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		cfg, err := config.Load("")
 		if err != nil {

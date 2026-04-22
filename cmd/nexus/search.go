@@ -23,7 +23,9 @@ Use this when you know the name of the file or section you want, e.g.:
   nexus search "Reviewer checklist"
   nexus search "praefect.tf"
 
-For meaning-based search ("how does praefect work?"), use nexus query instead.`,
+For meaning-based search ("how does praefect work?"), use nexus query instead.
+
+Since: v0.0.2`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
