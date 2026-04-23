@@ -11,6 +11,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**`/source` slash command in chat**
+- `/source <name> [name2]` — switch source filter mid-session; accepts space- or comma-separated names (`/source linux-commands SRE-handbook` or `/source linux-commands,SRE-handbook`)
+- `/source` or `/source show` — display the current active filter
+- `/source clear` — remove source restriction and return to default search
+- The pinned sticky header rewrites in-place (ANSI save/restore cursor) immediately on change — no restart needed
+
 **Multi-source search and source header**
 - `--source` on `nexus` (chat) and `nexus query` now accepts multiple values: `--source a --source b` or `--source a,b`; results are ORed across all named sources
 - Active source(s) shown in the sticky header when `--source` is set: `nexus v0.3.0 · model · threshold 0.70 · source: linux-commands,SRE-handbook · pid 123`

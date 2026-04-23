@@ -182,6 +182,37 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	}
 
 	pid := os.Getpid()
+
+	// redrawHeader rewrites the pinned header line in-place (row 2) using
+	// ANSI save/restore cursor so the scroll region content is undisturbed.
+	// Called whenever chatSources changes mid-session via /source.
+	redrawHeader := func() {
+		if !tty {
+			return
+		}
+		srcPart := ""
+		if len(chatSources) > 0 {
+			srcPart = c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
+		}
+		vis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
+		if len(chatSources) > 0 {
+			vis = fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  source: %s  ·  pid %d",
+				Version, sum.Model(), threshold, strings.Join(chatSources, ","), pid)
+		}
+		// \033[s save cursor, \033[2;1H jump to header row, \033[K clear line, rewrite, \033[u restore
+		fmt.Printf("\033[s\033[2;1H%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s  %s·%s  pid %d\033[K\033[u",
+			pad(len(vis), cols),
+			c.bold+c.cyan, Version, c.reset,
+			c.dim, c.reset,
+			c.bold, sum.Model(), c.reset,
+			c.dim, c.reset,
+			threshold,
+			srcPart,
+			c.dim, c.reset,
+			pid,
+		)
+	}
+
 	srcLabel := ""
 	if len(chatSources) > 0 {
 		srcLabel = "  ·  source: " + strings.Join(chatSources, ",")
@@ -324,6 +355,36 @@ loop:
 			if question == "exit" || question == "quit" {
 				fmt.Println()
 				break loop
+			}
+
+			// ── Slash commands ───────────────────────────────────────────────
+			if rest, ok := strings.CutPrefix(question, "/source"); ok {
+				arg := strings.TrimSpace(rest)
+				switch arg {
+				case "", "show":
+					if len(chatSources) == 0 {
+						fmt.Printf("  %sActive filter: (all default sources)%s\n\n", c.dim, c.reset)
+					} else {
+						fmt.Printf("  %sActive filter:%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
+					}
+				case "clear", "off", "none":
+					chatSources = nil
+					fmt.Printf("  %sSource filter cleared — searching all default sources%s\n\n", c.dim, c.reset)
+					redrawHeader()
+				default:
+					// Accept space- or comma-separated names: "/source a b" or "/source a,b"
+					parts := strings.FieldsFunc(arg, func(r rune) bool { return r == ',' || r == ' ' })
+					var sources []string
+					for _, p := range parts {
+						if p = strings.TrimSpace(p); p != "" {
+							sources = append(sources, p)
+						}
+					}
+					chatSources = sources
+					fmt.Printf("  %sSource filter →%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
+					redrawHeader()
+				}
+				continue
 			}
 
 			fmt.Println()
