@@ -11,6 +11,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Bug fixes**
+- `/gl` commands now print the raw fetched list (with clickable links) before the LLM summary — the model was previously summarizing todos and dropping URLs, leaving only bare MR/issue numbers with no way to open them
+- `formatTodos`, `formatItemList`, `formatSingleIssue`, `formatSingleMR`: titles rendered as `[Title](url)` markdown links so glamour makes them clickable; bare numbers are only used as fallback when no URL is present
+
 **GitLab on-demand context in chat**
 - GitLab URLs pasted anywhere in a question are auto-fetched via `glab api` and injected as live context — issues, MRs, work items, and epics all work; fetching runs concurrently with the vector search
 - `/gl todos [host]` — fetches pending GitLab todos and asks the LLM to prioritise them; defaults to `gitlab.com`, pass a hostname for private instances

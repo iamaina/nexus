@@ -453,6 +453,9 @@ loop:
 				}
 
 				fmt.Printf("  %s⚡ %s%s\n\n", c.dim, glOut.Name, c.reset)
+				// Print the raw list first — URLs are always visible here regardless
+				// of what the LLM chooses to include in its summary.
+				fmt.Print(renderMarkdown(glOut.Text, tty, cols))
 
 				genStop := startSpinner("generating…", tty)
 				answer, genErr := sum.StreamChat(ctx, io.Discard, history, syntheticQ, nil, []live.Output{glOut})

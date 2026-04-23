@@ -335,7 +335,12 @@ func formatSingleIssue(data []byte) string {
 	if issue.WorkItemType.Name != "" {
 		kind = issue.WorkItemType.Name
 	}
-	fmt.Fprintf(&sb, "%s #%d: %s\n", kind, issue.IID, issue.Title)
+	// Use markdown link so the title is clickable in the rendered output.
+	if issue.WebURL != "" {
+		fmt.Fprintf(&sb, "**%s #%d:** [%s](%s)\n", kind, issue.IID, issue.Title, issue.WebURL)
+	} else {
+		fmt.Fprintf(&sb, "**%s #%d:** %s\n", kind, issue.IID, issue.Title)
+	}
 	fmt.Fprintf(&sb, "State: %s  Author: @%s\n", issue.State, issue.Author.Username)
 	if len(issue.Assignees) > 0 {
 		names := make([]string, len(issue.Assignees))
@@ -352,9 +357,6 @@ func formatSingleIssue(data []byte) string {
 	if issue.Description != "" {
 		fmt.Fprintf(&sb, "\n%s\n", truncate(issue.Description, 800))
 	}
-	if issue.WebURL != "" {
-		fmt.Fprintf(&sb, "\n%s\n", issue.WebURL)
-	}
 	return sb.String()
 }
 
@@ -368,8 +370,12 @@ func formatSingleMR(data []byte) string {
 	if mr.Draft {
 		title = "[Draft] " + title
 	}
-	fmt.Fprintf(&sb, "MR !%d: %s\n", mr.IID, title)
-	fmt.Fprintf(&sb, "State: %s  %s → %s\n", mr.State, mr.SourceBranch, mr.TargetBranch)
+	if mr.WebURL != "" {
+		fmt.Fprintf(&sb, "**MR !%d:** [%s](%s)\n", mr.IID, title, mr.WebURL)
+	} else {
+		fmt.Fprintf(&sb, "**MR !%d:** %s\n", mr.IID, title)
+	}
+	fmt.Fprintf(&sb, "State: %s  `%s` → `%s`\n", mr.State, mr.SourceBranch, mr.TargetBranch)
 	fmt.Fprintf(&sb, "Author: @%s\n", mr.Author.Username)
 	if len(mr.Assignees) > 0 {
 		names := make([]string, len(mr.Assignees))
@@ -384,9 +390,6 @@ func formatSingleMR(data []byte) string {
 	if mr.Description != "" {
 		fmt.Fprintf(&sb, "\n%s\n", truncate(mr.Description, 800))
 	}
-	if mr.WebURL != "" {
-		fmt.Fprintf(&sb, "\n%s\n", mr.WebURL)
-	}
 	return sb.String()
 }
 
@@ -399,18 +402,22 @@ func formatTodos(data []byte) string {
 		return "No pending GitLab todos."
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Pending GitLab todos (%d):\n\n", len(todos))
+	fmt.Fprintf(&sb, "**Pending GitLab todos (%d):**\n\n", len(todos))
 	for i, t := range todos {
 		if i >= 15 {
 			fmt.Fprintf(&sb, "\n… and %d more\n", len(todos)-i)
 			break
 		}
-		fmt.Fprintf(&sb, "- [%s] %s #%d: %s\n", t.ActionName, t.TargetType, t.Target.IID, t.Target.Title)
-		if t.Project.NameWithNamespace != "" {
-			fmt.Fprintf(&sb, "  Project: %s\n", t.Project.NameWithNamespace)
-		}
+		// Render title as a markdown link so it's clickable after glamour renders it.
 		if t.Target.WebURL != "" {
-			fmt.Fprintf(&sb, "  %s\n", t.Target.WebURL)
+			fmt.Fprintf(&sb, "- `%s` **%s** [%s](%s)\n",
+				t.ActionName, t.TargetType, t.Target.Title, t.Target.WebURL)
+		} else {
+			fmt.Fprintf(&sb, "- `%s` **%s** #%d: %s\n",
+				t.ActionName, t.TargetType, t.Target.IID, t.Target.Title)
+		}
+		if t.Project.NameWithNamespace != "" {
+			fmt.Fprintf(&sb, "  *%s*\n", t.Project.NameWithNamespace)
 		}
 	}
 	return sb.String()
@@ -429,7 +436,7 @@ func formatItemList(data []byte, groupPath string) string {
 		return fmt.Sprintf("No open items in %s.", shortName)
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Open items in %s (%d):\n\n", shortName, len(items))
+	fmt.Fprintf(&sb, "**Open items in %s (%d):**\n\n", shortName, len(items))
 	for i, item := range items {
 		if i >= 15 {
 			fmt.Fprintf(&sb, "\n… and %d more\n", len(items)-i)
@@ -439,9 +446,10 @@ func formatItemList(data []byte, groupPath string) string {
 		if len(item.Assignees) > 0 {
 			assignee = "@" + item.Assignees[0].Username
 		}
-		fmt.Fprintf(&sb, "- #%d [%s]: %s\n", item.IID, assignee, item.Title)
 		if item.WebURL != "" {
-			fmt.Fprintf(&sb, "  %s\n", item.WebURL)
+			fmt.Fprintf(&sb, "- [%s](%s) `%s`\n", item.Title, item.WebURL, assignee)
+		} else {
+			fmt.Fprintf(&sb, "- #%d [%s]: %s\n", item.IID, assignee, item.Title)
 		}
 	}
 	return sb.String()
