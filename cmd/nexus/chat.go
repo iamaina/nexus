@@ -472,21 +472,16 @@ loop:
 				results = results[:12]
 			}
 
+			stop() // clear spinner before live sources so their output doesn't bleed onto the spinner line
+
 			// Live context
 			var liveOutputs []live.Output
 			if !chatNoLive {
 				liveSources, liveErr := a.ContextSources.List(ctx)
 				if liveErr == nil && len(liveSources) > 0 {
 					liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
-					for _, o := range liveOutputs {
-						if o.Err != nil {
-							logger.Warn(ctx, "live source failed", "name", o.Name, "err", o.Err)
-						}
-					}
 				}
 			}
-
-			stop() // clear spinner
 
 			// Source attribution
 			var srcParts []string

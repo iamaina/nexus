@@ -11,6 +11,9 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Bug fixes**
+- Chat: live source warning logs (`logger.Warn`) were printing to stderr while the search spinner was still active, causing lines like `⠼  searching...12:24:31 [WARN ] live source failed` to bleed together; spinner is now stopped before live sources execute; failed live sources are silently absent from context (no in-session log noise)
+
 **Terminal markdown rendering**
 - LLM responses in `nexus` (chat) and `nexus query` now render with full markdown formatting — bold, italic, headers, code blocks with syntax highlighting, bullet lists — using `glamour` (same library as `gh`)
 - TTY detection: rendered output on terminals; plain indented text when piped or redirected (safe for scripts and `grep`)
