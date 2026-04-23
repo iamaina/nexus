@@ -18,7 +18,7 @@ import (
 
 var (
 	queryThreshold float64
-	querySource    string
+	querySource    []string
 	queryCategory  string
 	queryModel     string
 	showSources    bool
@@ -66,8 +66,8 @@ Since: v0.0.1  (--model added v0.0.2; --no-live, --sources added v0.1.0; --categ
 			slog.Float64("threshold", threshold),
 			slog.String("model", sum.Model()),
 		}
-		if querySource != "" {
-			logArgs = append(logArgs, slog.String("source", querySource))
+		if len(querySource) > 0 {
+			logArgs = append(logArgs, slog.String("source", strings.Join(querySource, ",")))
 		}
 		logger.Info(ctx, "query.start", logArgs...)
 
@@ -278,7 +278,7 @@ Since: v0.0.1  (--model added v0.0.2; --no-live, --sources added v0.1.0; --categ
 
 func init() {
 	queryCmd.Flags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold (overrides config, default 0.70)")
-	queryCmd.Flags().StringVar(&querySource, "source", "", "restrict search to a source or filename (e.g. progit)")
+	queryCmd.Flags().StringSliceVar(&querySource, "source", nil, "restrict search to one or more sources (repeatable: --source a --source b, or comma-separated: --source a,b)")
 	queryCmd.Flags().StringVar(&queryCategory, "category", "", "restrict search to sources in this category (e.g. reference, work) (added v0.2.0)")
 	queryCmd.Flags().StringVar(&queryModel, "model", "", "generation model to use (overrides config, e.g. llama3.1:8b)")
 	queryCmd.Flags().BoolVar(&showSources, "sources", false, "show retrieved source chunks before the answer")

@@ -117,7 +117,7 @@ func (iw *indentWriter) Write(p []byte) (int, error) {
 var (
 	chatModel    string
 	chatNoLive   bool
-	chatSource   string
+	chatSources  []string
 	chatCategory string
 )
 
@@ -182,14 +182,24 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	}
 
 	pid := os.Getpid()
-	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
-	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f  %s·%s  pid %d\n",
+	srcLabel := ""
+	if len(chatSources) > 0 {
+		srcLabel = "  ·  source: " + strings.Join(chatSources, ",")
+	}
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f%s  ·  pid %d", Version, sum.Model(), threshold, srcLabel, pid)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s  %s·%s  pid %d\n",
 		pad(len(headerVis), cols),
 		c.bold+c.cyan, Version, c.reset,
 		c.dim, c.reset,
 		c.bold, sum.Model(), c.reset,
 		c.dim, c.reset,
 		threshold,
+		func() string {
+			if len(chatSources) > 0 {
+				return c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
+			}
+			return ""
+		}(),
 		c.dim, c.reset,
 		pid,
 	)
@@ -331,7 +341,7 @@ loop:
 				continue
 			}
 
-			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSource, chatCategory))
+			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSources, chatCategory))
 			if err != nil {
 				stop()
 				if ctx.Err() != nil {
@@ -344,10 +354,10 @@ loop:
 			// If --source was given but the vector search returned nothing, the
 			// source almost certainly has no indexed content. Warn and skip the
 			// LLM call — otherwise the model hallucinates from training data.
-			if len(candidates) == 0 && chatSource != "" {
+			if len(candidates) == 0 && len(chatSources) > 0 {
 				stop()
 				fmt.Printf("  %s⚠  Source %q has no indexed content — run: nexus ingest%s\n\n",
-					c.dim, chatSource, c.reset)
+					c.dim, strings.Join(chatSources, ", "), c.reset)
 				continue
 			}
 
@@ -513,7 +523,7 @@ func init() {
 	// Chat flags live on RootCmd — bare `nexus` IS the chat interface.
 	RootCmd.Flags().StringVar(&chatModel, "model", "", "generation model (overrides config)")
 	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
-	RootCmd.Flags().StringVar(&chatSource, "source", "", "restrict search to a source or filename")
+	RootCmd.Flags().StringSliceVar(&chatSources, "source", nil, "restrict search to one or more sources (repeatable: --source a --source b, or comma-separated: --source a,b)")
 	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work) (added v0.2.0)")
 }
 

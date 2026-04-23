@@ -65,12 +65,13 @@ type Result struct {
 // similarity search. It is constructed by the command layer from config defaults
 // and the user's explicit --source / --category flags.
 type SearchFilter struct {
-	// Source restricts results to documents whose source_name or file_path contains
-	// this string (case-insensitive). An explicit source bypasses ExcludeNames.
-	Source string
+	// Sources restricts results to documents whose source_name or file_path contains
+	// any of these strings (case-insensitive, OR logic). An explicit source list
+	// bypasses ExcludeNames. Supports multi-source queries via --source a --source b.
+	Sources []string
 
 	// ExcludeNames is a list of exact source names to skip.
-	// Populated from sources with search_by_default: false when Source is empty.
+	// Populated from sources with search_by_default: false when Sources is empty.
 	ExcludeNames []string
 
 	// IncludeNames restricts results to documents whose source_name is in this list.

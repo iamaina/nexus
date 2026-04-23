@@ -11,6 +11,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Multi-source search and source header**
+- `--source` on `nexus` (chat) and `nexus query` now accepts multiple values: `--source a --source b` or `--source a,b`; results are ORed across all named sources
+- Active source(s) shown in the sticky header when `--source` is set: `nexus v0.3.0 · model · threshold 0.70 · source: linux-commands,SRE-handbook · pid 123`
+- `SearchFilter.Source string` replaced by `SearchFilter.Sources []string` — SQL generates one ILIKE clause per source joined with OR
+
 **Web page ingestion (`nexus ingest-url`)**
 - `nexus ingest-url <url>` — fetch a web page, extract its content, and ingest it into the search index; the URL is the document identity for dedup (unchanged pages skipped on re-run)
 - `--recursive` — crawl all pages within the same URL path prefix; each page fetched once and reused for both ingestion and link discovery (no double-fetch)

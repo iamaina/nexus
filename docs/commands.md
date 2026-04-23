@@ -22,7 +22,7 @@ nexus --resume 2026-04-20_14-32_praefect           # continue a saved session (t
 | `--resume string` | "" | Continue a saved session (tab-complete with session names) |
 | `--model string` | "" | Override generation model for this session |
 | `--no-live` | false | Skip live context sources (kubectl, terraform, etc.) |
-| `--source string` | "" | Restrict search to one source name or filename fragment |
+| `--source string` | "" | Restrict search to one or more sources (repeatable: `--source a --source b`, or comma-separated: `--source a,b`) |
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
 
@@ -261,7 +261,7 @@ nexus query "What was the Canva invoice for?"
 | Flag | Default | Description |
 |---|---|---|
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
-| `--source string` | "" | Restrict search to documents from one source name or filename fragment |
+| `--source string` | "" | Restrict search to one or more sources (repeatable or comma-separated) |
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--model string` | "" | Override the generation model for this query |
 | `--sources` | false | Print retrieved source chunks before the answer |
