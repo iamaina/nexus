@@ -47,6 +47,23 @@ answers scroll. The PID is shown for easy signal tracing:
 kill $(cat ~/.config/nexus/nexus.pid)
 ```
 
+**In-session slash commands:**
+
+| Command | Description |
+|---|---|
+| `/source <name>` | Restrict search to one or more sources (space- or comma-separated) |
+| `/source clear` | Remove source restriction |
+| `/source` or `/source show` | Show current active filter |
+| `/gl todos` | Fetch your pending GitLab todos and get a prioritised recommendation |
+| `/gl todos <host>` | Same but for a specific GitLab instance (e.g. `ops.gitlab.net`) |
+| `/gl items <group-path\|url>` | List open work items / issues in a GitLab group |
+
+GitLab URLs pasted anywhere in your question are **auto-fetched** — no slash command needed:
+```
+What is this issue about? https://gitlab.com/namespace/project/-/issues/123
+What changed in https://gitlab.com/namespace/project/-/merge_requests/456?
+```
+
 ---
 
 ## Global flags

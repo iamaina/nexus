@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/chzyer/readline"
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/config"
+	"github.com/iamaina/nexus/internal/gitlab"
 	"github.com/iamaina/nexus/internal/live"
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/iamaina/nexus/internal/models"
@@ -137,6 +139,22 @@ var (
 	chatSources  []string
 	chatCategory string
 )
+
+// gitLabHosts returns all GitLab hostnames from the repo roots config so the
+// gitlab fetcher recognises private instances (ops.gitlab.net, pre.gitlab.com…).
+func gitLabHosts(cfg *config.Config) []string {
+	seen := make(map[string]bool)
+	var hosts []string
+	for _, repo := range cfg.Roots.Repos {
+		for _, h := range repo.Hosts {
+			if !seen[h] {
+				seen[h] = true
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return hosts
+}
 
 // ── Shared completions helper ─────────────────────────────────────────────────
 
@@ -404,6 +422,59 @@ loop:
 				continue
 			}
 
+			// ── /gl command — on-demand GitLab context ───────────────────────
+			if rest, ok := strings.CutPrefix(question, "/gl"); ok {
+				arg := strings.TrimSpace(rest)
+
+				var glOut live.Output
+				var syntheticQ string
+
+				switch {
+				case arg == "" || arg == "todos":
+					glOut = gitlab.FetchTodos(ctx, "gitlab.com")
+					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case strings.HasPrefix(arg, "todos "):
+					host := strings.TrimSpace(strings.TrimPrefix(arg, "todos "))
+					glOut = gitlab.FetchTodos(ctx, host)
+					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case strings.HasPrefix(arg, "items "):
+					groupArg := strings.TrimSpace(strings.TrimPrefix(arg, "items "))
+					host, groupPath := gitlab.ParseGroupArg(groupArg)
+					glOut = gitlab.FetchGroupItems(ctx, host, groupPath)
+					syntheticQ = fmt.Sprintf("What is available to pick up in %s? Summarise the open items by priority and suggest where to start.", groupPath)
+				default:
+					fmt.Printf("  Unknown /gl command: %q\n  Available:\n    /gl todos [host]       — your pending todos\n    /gl items <group|url>  — open items in a group\n\n", arg)
+					continue
+				}
+
+				if glOut.Err != nil {
+					fmt.Printf("  %s✗ %s: %v%s\n\n", c.dim, glOut.Name, glOut.Err, c.reset)
+					continue
+				}
+
+				fmt.Printf("  %s⚡ %s%s\n\n", c.dim, glOut.Name, c.reset)
+
+				genStop := startSpinner("generating…", tty)
+				answer, genErr := sum.StreamChat(ctx, io.Discard, history, syntheticQ, nil, []live.Output{glOut})
+				genStop()
+				if genErr != nil {
+					if ctx.Err() != nil {
+						break loop
+					}
+					fmt.Printf("  generate error: %v\n\n", genErr)
+					continue
+				}
+				fmt.Print(renderMarkdown(answer, tty, cols))
+				fmt.Println(c.sep(cols))
+				fmt.Println()
+
+				history = append(history,
+					summarizer.ChatMessage{Role: "user", Content: syntheticQ},
+					summarizer.ChatMessage{Role: "assistant", Content: answer},
+				)
+				continue
+			}
+
 			fmt.Println()
 
 			// Embed + search
@@ -474,14 +545,20 @@ loop:
 
 			stop() // clear spinner before live sources so their output doesn't bleed onto the spinner line
 
-			// Live context
+			// Live context + GitLab URL auto-detection (run concurrently)
 			var liveOutputs []live.Output
+			glCh := make(chan []live.Output, 1)
+			go func() {
+				glCh <- gitlab.ExtractAndFetch(ctx, question, gitLabHosts(a.Config))
+			}()
+
 			if !chatNoLive {
 				liveSources, liveErr := a.ContextSources.List(ctx)
 				if liveErr == nil && len(liveSources) > 0 {
 					liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
 				}
 			}
+			liveOutputs = append(<-glCh, liveOutputs...)
 
 			// Source attribution
 			var srcParts []string

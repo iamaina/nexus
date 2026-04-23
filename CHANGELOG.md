@@ -11,6 +11,13 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**GitLab on-demand context in chat**
+- GitLab URLs pasted anywhere in a question are auto-fetched via `glab api` and injected as live context — issues, MRs, work items, and epics all work; fetching runs concurrently with the vector search
+- `/gl todos [host]` — fetches pending GitLab todos and asks the LLM to prioritise them; defaults to `gitlab.com`, pass a hostname for private instances
+- `/gl items <group-path|url>` — lists open work items / issues in a group; accepts either a path (`gitlab-com/gl-infra/software-delivery`) or a full GitLab URL; tries the work_items API first and falls back to issues for older instances
+- `internal/gitlab/fetcher.go` — new package: URL parsing, `glab api` invocation, JSON→text formatting for issues, MRs, todos, and item lists
+- `/gl` commands skip the vector search and send only the fetched data to the LLM; URL auto-detection in questions goes through the full search + fetched context together
+
 **IVFFlat vector index support**
 - `Search` now sets `ivfflat.probes = 10` before every query so the IVFFlat index is used with good recall at large scale (Wikipedia-sized datasets); default probes=1 misses many relevant results when chunks exceed ~100K rows
 - Index must be created once manually: `CREATE INDEX CONCURRENTLY chunks_embedding_idx ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 3000);` — recommended `lists` ≈ `row_count / 1000`
