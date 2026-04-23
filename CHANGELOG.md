@@ -11,6 +11,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**IVFFlat vector index support**
+- `Search` now sets `ivfflat.probes = 10` before every query so the IVFFlat index is used with good recall at large scale (Wikipedia-sized datasets); default probes=1 misses many relevant results when chunks exceed ~100K rows
+- Index must be created once manually: `CREATE INDEX CONCURRENTLY chunks_embedding_idx ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 3000);` — recommended `lists` ≈ `row_count / 1000`
+
 **Bug fixes**
 - Chat: live source warning logs (`logger.Warn`) were printing to stderr while the search spinner was still active, causing lines like `⠼  searching...12:24:31 [WARN ] live source failed` to bleed together; spinner is now stopped before live sources execute; failed live sources are silently absent from context (no in-session log noise)
 

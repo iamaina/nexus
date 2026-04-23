@@ -128,6 +128,14 @@ func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, 
 		where += fmt.Sprintf(" AND d.source_name NOT IN (%s)", strings.Join(ph, ","))
 	}
 
+	// Increase IVFFlat probes so the index trades a little extra work for
+	// better recall across large datasets (e.g. Wikipedia). Default is 1
+	// (fast but misses distant buckets); 10 gives good accuracy without
+	// meaningfully slowing down queries at this scale.
+	if _, err := m.DB.Exec(ctx, "SET ivfflat.probes = 10"); err != nil {
+		return nil, fmt.Errorf("set ivfflat.probes: %w", err)
+	}
+
 	q := fmt.Sprintf(`
 		SELECT
 			c.document_id,
