@@ -87,6 +87,26 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
 
+**Bug fixes**
+- Background jobs (`nexus ingest --background`, `nexus ingest-url --background`) now default to `info` log level — inheriting `logLevel: debug` from config produced unreadably large log files; override with `NEXUS_LOG_LEVEL=debug` in the shell if verbose output is needed
+- Chat: `--source <name>` with an un-ingested source no longer silently calls the LLM with empty context (which caused hallucinated answers citing training-data sources like "progit"); now prints `⚠ Source "<name>" has no indexed content — run: nexus ingest` and skips the LLM call
+- Chat: scroll region exit no longer jumps to the last terminal row, which left a screenful of blank lines after short sessions; the shell prompt now appears immediately after the session summary line
+
+**`nexus source rm` — remove a source from the index**
+- `nexus source rm <name>` — shows doc count and chunk count for the named source, asks for confirmation, then deletes all its documents and chunks from the database; source entry in `config.yaml` is not touched
+- `DocumentModel.CountBySource` — returns doc count and total chunk count for a source in one query
+- `DocumentModel.DeleteBySource` — deletes all documents for a source (chunks cascade); returns rows affected
+
+**`nexus ingest --background`**
+- `nexus ingest --background` — runs the full batch ingest (file sources + URL sources) detached from the terminal, logging to `~/.config/nexus/logs/ingest.log`; returns immediately with PID and log path
+- Background logic extracted into `startBackground(label, logFile string)` in `cmd/nexus/background.go` — shared by `nexus ingest` and `nexus ingest-url`
+
+**`nexus ingest-url` — save and background flags**
+- `--save` — persists the URL source to `config.yaml` immediately (before the crawl begins) so `nexus ingest` and `nexus watch` pick it up automatically on future runs; upserts by name if the source already exists
+- `--watch` — when used with `--save`, sets `watch: true` on the saved source so `nexus watch` polls it on its interval
+- `--background` — re-execs the crawl detached from the terminal (`Setsid`); returns immediately and prints the PID and log path (`~/.config/nexus/logs/ingest-url-<name>.log`)
+- `--save` and `--background` compose: config is written synchronously before the child is launched, so the saved source is always consistent regardless of how the crawl ends
+
 **`nexus source status` — ingestion status command**
 - `nexus source status` — shows all configured sources (file and URL) with per-source doc count, chunk count, last ingest timestamp, watch interval, and `opt-in` visibility flag
 - Sources in `config.yaml` that have not yet been ingested appear in the table with `—` counts so you can see at a glance what still needs indexing

@@ -28,6 +28,15 @@ Since: v0.0.1`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 
+		background, _ := cmd.Flags().GetBool("background")
+		if background {
+			if err := startBackground("Running nexus ingest", "ingest"); err != nil {
+				logger.Error(ctx, "background.failed", slog.Any("err", err))
+				os.Exit(1)
+			}
+			return
+		}
+
 		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
 			logger.Error(ctx, "Application not found in context")
@@ -140,5 +149,6 @@ Since: v0.0.1`,
 
 func init() {
 	ingestCmd.Flags().BoolVar(&force, "force", false, "Force re-ingestion (ignore dedup)")
+	ingestCmd.Flags().Bool("background", false, "Run ingest in the background; returns immediately and logs to ~/.config/nexus/logs/ingest.log")
 	RootCmd.AddCommand(ingestCmd)
 }
