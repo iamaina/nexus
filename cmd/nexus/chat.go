@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/chzyer/readline"
 	"github.com/iamaina/nexus/internal/app"
 	"github.com/iamaina/nexus/internal/live"
@@ -33,6 +34,12 @@ const (
 // cs holds the active colour sequences.
 // All fields are empty strings when stdout is not a TTY (piped/redirected).
 type cs struct{ reset, bold, dim, green, cyan, gray string }
+
+// isTerminal returns true when stdout is an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
 
 func newCS() cs {
 	fi, err := os.Stdout.Stat()
@@ -92,24 +99,34 @@ func startSpinner(label string, tty bool) func() {
 	}
 }
 
-// ── indentWriter ─────────────────────────────────────────────────────────────
+// ── Markdown renderer ────────────────────────────────────────────────────────
 
-// indentWriter inserts a fixed prefix after every newline (and once at the
-// start) so streamed LLM responses stay visually aligned with source lines.
-type indentWriter struct {
-	w       io.Writer
-	prefix  string
-	started bool
-}
-
-func (iw *indentWriter) Write(p []byte) (int, error) {
-	if !iw.started {
-		iw.started = true
-		_, _ = io.WriteString(iw.w, iw.prefix)
+// renderMarkdown renders markdown text with glamour when tty is true.
+// Falls back to plain indented text on non-tty (piped) output.
+func renderMarkdown(text string, tty bool, cols int) string {
+	if !tty {
+		// Plain indented text for piped output
+		var sb strings.Builder
+		for line := range strings.SplitSeq(text, "\n") {
+			sb.WriteString("  ")
+			sb.WriteString(line)
+			sb.WriteByte('\n')
+		}
+		return sb.String()
 	}
-	s := strings.ReplaceAll(string(p), "\n", "\n"+iw.prefix)
-	_, err := iw.w.Write([]byte(s))
-	return len(p), err
+	width := max(cols-4, 40) // leave margin
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return "  " + strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n  ") + "\n"
+	}
+	rendered, err := r.Render(text)
+	if err != nil {
+		return "  " + strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n  ") + "\n"
+	}
+	return rendered
 }
 
 // ── Command vars ─────────────────────────────────────────────────────────────
@@ -499,18 +516,19 @@ loop:
 					c.dim, threshold, c.reset)
 			}
 
-			// Stream response
-			w := &indentWriter{w: os.Stdout, prefix: "  "}
-			answer, err := sum.StreamChat(ctx, w, history, question, results, liveOutputs)
+			// Generate response — stream to discard, then glamour-render the full answer
+			genStop := startSpinner("generating…", tty)
+			answer, err := sum.StreamChat(ctx, io.Discard, history, question, results, liveOutputs)
+			genStop()
 			if err != nil {
-				fmt.Println()
 				if ctx.Err() != nil {
 					break loop
 				}
 				fmt.Printf("  generate error: %v\n\n", err)
 				continue
 			}
-			fmt.Print("\n\n")
+			fmt.Print(renderMarkdown(answer, tty, cols))
+			fmt.Println()
 
 			// "Open to read more:" — unique file paths from matched results
 			home, _ := os.UserHomeDir()

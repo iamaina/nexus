@@ -242,7 +242,10 @@ Since: v0.0.1  (--model added v0.0.2; --no-live, --sources added v0.1.0; --categ
 			return
 		}
 
-		fmt.Printf("Answer:\n\n%s\n", answer)
+		tty := isTerminal()
+		cols, _ := termSize()
+		fmt.Print("Answer:\n")
+		fmt.Print(renderMarkdown(answer, tty, cols))
 
 		// Deduplicated file paths after the answer — open any of these to read more.
 		seenFiles := make(map[string]bool)

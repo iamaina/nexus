@@ -11,6 +11,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Terminal markdown rendering**
+- LLM responses in `nexus` (chat) and `nexus query` now render with full markdown formatting — bold, italic, headers, code blocks with syntax highlighting, bullet lists — using `glamour` (same library as `gh`)
+- TTY detection: rendered output on terminals; plain indented text when piped or redirected (safe for scripts and `grep`)
+- Chat: response is generated in full first (spinner shown), then rendered — removes the raw-token streaming artifact of partial markdown mid-print
+- `renderMarkdown(text, tty, cols)` shared helper in `cmd/nexus/chat.go`; `isTerminal()` extracted so `query.go` can use both without duplication
+
 **`/source` slash command in chat**
 - `/source <name> [name2]` — switch source filter mid-session; accepts space- or comma-separated names (`/source linux-commands SRE-handbook` or `/source linux-commands,SRE-handbook`)
 - `/source` or `/source show` — display the current active filter
