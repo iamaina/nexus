@@ -16,7 +16,8 @@ var codeExtensions = map[string]bool{
 	".js": true, ".ts": true,
 	".sh": true, ".bash": true,
 	".yaml": true, ".yml": true, ".json": true, ".toml": true,
-	".sql": true,
+	".sql":     true,
+	".jsonnet": true, ".libsonnet": true,
 }
 
 // Extract dispatches to the correct extractor based on file extension.
@@ -159,7 +160,10 @@ func ExtractMarkdown(path string) ([]Span, error) {
 		y += lineH
 	}
 
-	return spans, scanner.Err()
+	if err := scanner.Err(); err != nil && err != bufio.ErrTooLong {
+		return nil, err
+	}
+	return spans, nil
 }
 
 // ExtractPlainText converts a plain text file into []Span.
@@ -200,7 +204,10 @@ func ExtractPlainText(path string) ([]Span, error) {
 		y += lineH
 	}
 
-	return spans, scanner.Err()
+	if err := scanner.Err(); err != nil && err != bufio.ErrTooLong {
+		return nil, err
+	}
+	return spans, nil
 }
 
 // parseATXHeading detects "# Title", "## Title", etc.

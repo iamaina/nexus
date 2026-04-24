@@ -12,6 +12,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 **Bug fixes**
+- `ingest`: `.jsonnet` and `.libsonnet` files were being routed to the Python/PDF extractor (which is only for PDFs) because they were missing from `codeExtensions`; they now use `ExtractPlainText` and ingest cleanly without requiring the Python venv
+- `ingest`: files with lines exceeding the 1 MB scanner buffer (`bufio.ErrTooLong`) now ingest with partial content instead of failing — the spans collected before the oversized line are returned without error; large minified JSON files no longer abort the ingest
+- `chunks.Store`: INSERT batch is now idempotent (`ON CONFLICT ... DO UPDATE`) — prevents duplicate key constraint violations if two ingest processes run concurrently against the same URLs
+
 - `/gl` commands now print the raw fetched list (with clickable links) before the LLM summary — the model was previously summarizing todos and dropping URLs, leaving only bare MR/issue numbers with no way to open them
 - `formatTodos`, `formatItemList`, `formatSingleIssue`, `formatSingleMR`: titles rendered as `[Title](url)` markdown links so glamour makes them clickable; bare numbers are only used as fallback when no URL is present
 

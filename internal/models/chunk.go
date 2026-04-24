@@ -32,7 +32,11 @@ func (m *ChunkModel) Store(ctx context.Context, docID int64, chunks []EnrichedCh
 	for i, chunk := range chunks {
 		batch.Queue(
 			`INSERT INTO chunks (document_id, chunk_index, chunk_text, chapter, section_level)
-			 VALUES ($1, $2, $3, $4, $5)`,
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+			     chunk_text    = EXCLUDED.chunk_text,
+			     chapter       = EXCLUDED.chapter,
+			     section_level = EXCLUDED.section_level`,
 			docID, i, chunk.Text, chunk.Chapter, chunk.Level,
 		)
 	}
