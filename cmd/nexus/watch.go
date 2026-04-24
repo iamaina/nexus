@@ -369,7 +369,7 @@ func pollURLSource(ctx context.Context, a *app.Application, u config.URLSource) 
 		slog.String("url", u.URL))
 	fmt.Printf("  ⟳ Crawling %q (%s)…\n", u.Name, u.URL)
 
-	count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), false, false)
+	count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), false, false, u.Exclude)
 	if err != nil {
 		logger.Warn(ctx, "url.poll_error",
 			slog.String("source", u.Name),

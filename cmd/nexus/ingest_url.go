@@ -153,7 +153,7 @@ Since: v0.2.0 (--save, --watch, --background added v0.3.0)`,
 		fmt.Println(")")
 		fmt.Println()
 
-		count, err := ingestion.CrawlAndIngest(ctx, a, rawURL, source, depth, delay, force, dryRun)
+		count, err := ingestion.CrawlAndIngest(ctx, a, rawURL, source, depth, delay, force, dryRun, nil)
 		if err != nil {
 			return err
 		}

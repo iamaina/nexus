@@ -12,6 +12,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 **Bug fixes**
+- URL sources now support an `exclude` list — URL path substrings that are skipped during crawl discovery (never fetched or queued); same concept as the `exclude` field on file sources; kubernetes source now excludes `/_print/` and `/reference/kubectl/kubectl_` paths that 404 after the k8s docs reorg
 - `ingest`: `.jsonnet` and `.libsonnet` files were being routed to the Python/PDF extractor (which is only for PDFs) because they were missing from `codeExtensions`; they now use `ExtractPlainText` and ingest cleanly without requiring the Python venv
 - `ingest`: files with lines exceeding the 1 MB scanner buffer (`bufio.ErrTooLong`) now ingest with partial content instead of failing — the spans collected before the oversized line are returned without error; large minified JSON files no longer abort the ingest
 - `chunks.Store`: INSERT batch is now idempotent (`ON CONFLICT ... DO UPDATE`) — prevents duplicate key constraint violations if two ingest processes run concurrently against the same URLs
