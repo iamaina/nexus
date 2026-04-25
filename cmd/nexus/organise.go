@@ -97,6 +97,12 @@ Since: v0.1.0`,
 			}
 		}
 
+		// Require a workspace map before proceeding — organise uses it for
+		// smart placement decisions. nexus workspace scan generates it.
+		if !checkWorkspaceMap(a) {
+			return
+		}
+
 		home, _ := os.UserHomeDir()
 
 		// Build plan: classify each file.

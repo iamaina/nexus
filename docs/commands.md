@@ -216,6 +216,26 @@ nexus organise --dry-run ~/Downloads                # show plan without moving a
 
 ---
 
+## `nexus workspace`
+
+Commands for generating and inspecting the workspace structure map.
+
+### `nexus workspace scan`
+
+Walks `roots.workspace`, detects all git repos, and writes `dir_structure.md` at the workspace root. Also ingests the file as source `workspace-structure` so it is immediately queryable.
+
+This is the bootstrap command — run it once on first setup, or any time you want to force an immediate refresh without waiting for the next `nexus watch` cycle.
+
+**`nexus organise` requires this file to exist before it will proceed.**
+
+```bash
+nexus workspace scan
+```
+
+`nexus watch` keeps the map current automatically (regenerated on startup, every 24 h, and whenever a new repo is detected). `nexus workspace scan` is only needed for the initial run or manual refreshes.
+
+---
+
 ## `nexus watch`
 
 Monitors multiple directory types concurrently. Designed to run as a background service via `make watch-install`.

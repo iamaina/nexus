@@ -12,6 +12,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 **Bug fixes**
+- `nexus workspace scan` — new command: one-shot bootstrap that walks `roots.workspace`, generates `dir_structure.md`, and ingests it as source `workspace-structure`; `nexus organise` now requires this file to exist before proceeding and prints a clear error with the command to run if it is missing
 - `nexus watch`: workspace snapshot now refreshes every 24 h while watch is running, not only on startup — catches subdirectory and non-repo structural changes that fsnotify misses because the workspace watch is non-recursive
 - `nexus watch`: new repo detection (`checkNewRepo`) now also regenerates `dir_structure.md` — previously the DB was updated but the snapshot stayed stale
 - `nexus organise`: `collectFiles` now skips `.git`, `node_modules`, `vendor`, `.direnv`, `.venv`, `.terraform`, and other generated directories — prevents classifying files that belong to a repo or package cache
