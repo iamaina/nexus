@@ -187,8 +187,10 @@ var skipDirs = map[string]bool{
 }
 
 // collectFiles returns all supported files in dir.
-// If recursive is true it walks subdirectories, skipping any whose name appears
-// in skipDirs (git repos, caches, generated environments, etc.).
+// If recursive is true it walks subdirectories, skipping:
+//   - directories whose name appears in skipDirs (caches, build outputs, etc.)
+//   - directories that ARE git repos — repos are atomic units; their files
+//     belong to the repo, not to the loose-document organiser
 func collectFiles(dir string, recursive bool) ([]string, error) {
 	var files []string
 	entries, err := os.ReadDir(dir)
@@ -198,7 +200,7 @@ func collectFiles(dir string, recursive bool) ([]string, error) {
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
 		if e.IsDir() {
-			if recursive && !skipDirs[e.Name()] {
+			if recursive && !skipDirs[e.Name()] && !isGitRepo(path) {
 				sub, err := collectFiles(path, true)
 				if err != nil {
 					return nil, err
@@ -213,6 +215,13 @@ func collectFiles(dir string, recursive bool) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// isGitRepo reports whether dir contains a .git entry (file or directory),
+// making it a git repository root that collectFiles should not descend into.
+func isGitRepo(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 func init() {
