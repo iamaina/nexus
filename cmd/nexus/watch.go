@@ -22,11 +22,12 @@ import (
 
 // Settle delays and scan intervals.
 const (
-	settleDelay     = 3 * time.Second  // personal files: wait for write to finish
-	repoSettleDelay = 10 * time.Second // new repo dir: wait for clone to complete
-	sourceScanTick  = 5 * time.Minute  // how often to re-scan watched sources
-	gdocSyncTick    = 30 * time.Minute // how often to re-sync registered Google Docs
-	defaultURLTick  = 24 * time.Hour   // default polling interval for URL sources
+	settleDelay       = 3 * time.Second  // personal files: wait for write to finish
+	repoSettleDelay   = 10 * time.Second // new repo dir: wait for clone to complete
+	sourceScanTick    = 5 * time.Minute  // how often to re-scan watched sources
+	gdocSyncTick      = 30 * time.Minute // how often to re-sync registered Google Docs
+	defaultURLTick    = 24 * time.Hour   // default polling interval for URL sources
+	workspaceSnapTick = 24 * time.Hour   // periodic workspace snapshot refresh
 )
 
 // watchedExtensions are the file types processed by the personal intake watcher.
@@ -169,10 +170,22 @@ Since: v0.0.1  (workspace OS layer added v0.1.0)`,
 				slog.Duration("interval", parseURLInterval(u.Interval)))
 		}
 
-		// 5. Initial workspace snapshot — run once at startup so the DB is current.
+		// 5. Workspace snapshot — generate once at startup, then refresh every 24 h.
+		// The periodic refresh catches structural changes (new subdirs, renamed dirs)
+		// that fsnotify misses because the workspace watch is non-recursive.
 		if workspaceRoot != "" {
 			go func() {
 				regenerateWorkspaceSnapshot(context.Background(), a, workspaceRoot)
+				ticker := time.NewTicker(workspaceSnapTick)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						regenerateWorkspaceSnapshot(context.Background(), a, workspaceRoot)
+					case <-ctx.Done():
+						return
+					}
+				}
 			}()
 		}
 
@@ -340,6 +353,11 @@ func checkNewRepo(ctx context.Context, a *app.Application, rootName, path string
 		logger.Warn(ctx, "repo.register_failed",
 			slog.String("path", path),
 			slog.Any("err", err))
+	}
+
+	// Regenerate the workspace snapshot so dir_structure.md reflects the new repo.
+	if ws := a.Config.Roots.Workspace; ws != "" {
+		regenerateWorkspaceSnapshot(ctx, a, ws)
 	}
 }
 

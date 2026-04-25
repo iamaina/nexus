@@ -12,6 +12,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 **Bug fixes**
+- `nexus watch`: workspace snapshot now refreshes every 24 h while watch is running, not only on startup — catches subdirectory and non-repo structural changes that fsnotify misses because the workspace watch is non-recursive
+- `nexus watch`: new repo detection (`checkNewRepo`) now also regenerates `dir_structure.md` — previously the DB was updated but the snapshot stayed stale
+- `nexus organise`: `collectFiles` now skips `.git`, `node_modules`, `vendor`, `.direnv`, `.venv`, `.terraform`, and other generated directories — prevents classifying files that belong to a repo or package cache
+- `nexus organise`: files already present in the documents table are skipped without an LLM classification call — makes repeated runs idempotent
 - URL sources now support an `exclude` list — URL path substrings that are skipped during crawl discovery (never fetched or queued); same concept as the `exclude` field on file sources; kubernetes source now excludes `/_print/` and `/reference/kubectl/kubectl_` paths that 404 after the k8s docs reorg
 - `ingest`: `.jsonnet` and `.libsonnet` files were being routed to the Python/PDF extractor (which is only for PDFs) because they were missing from `codeExtensions`; they now use `ExtractPlainText` and ingest cleanly without requiring the Python venv
 - `ingest`: files with lines exceeding the 1 MB scanner buffer (`bufio.ErrTooLong`) now ingest with partial content instead of failing — the spans collected before the oversized line are returned without error; large minified JSON files no longer abort the ingest

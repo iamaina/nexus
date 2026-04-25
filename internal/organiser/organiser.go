@@ -83,6 +83,13 @@ func (o *Organiser) BuildPlan(ctx context.Context, a *app.Application, files []s
 	var plan Plan
 
 	for _, srcPath := range files {
+		// Skip files that are already ingested at their current path — they were
+		// organised in a previous run. We don't need the hash to match; presence
+		// in the documents table at this exact path is enough to know they're filed.
+		if alreadyIngested(ctx, a, srcPath) {
+			continue
+		}
+
 		fmt.Printf("  Classifying %s ...\n", filepath.Base(srcPath))
 		cl, err := a.Classifier.Classify(ctx, srcPath)
 		if err != nil {
@@ -168,6 +175,17 @@ func Execute(ctx context.Context, a *app.Application, plan Plan, force bool) {
 		displayDest := strings.Replace(item.DestPath, home, "~", 1)
 		fmt.Printf("  ✓ %s → %s\n", filepath.Base(item.SrcPath), displayDest)
 	}
+}
+
+// alreadyIngested reports whether srcPath is already present in the documents
+// table. If it is, the file was organised and ingested in a previous run — no
+// need to re-classify it again.
+func alreadyIngested(ctx context.Context, a *app.Application, srcPath string) bool {
+	var exists bool
+	_ = a.DB.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM documents WHERE file_path = $1)`, srcPath,
+	).Scan(&exists)
+	return exists
 }
 
 // matchTopic looks up an existing directory whose name matches the topic
