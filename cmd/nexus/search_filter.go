@@ -12,8 +12,8 @@ import (
 //  1. source non-empty → restrict to that source; ExcludeNames bypassed
 //  2. category non-empty → restrict to sources in that category; ExcludeNames bypassed
 //  3. neither → apply ExcludeNames from sources with search_by_default: false
-func buildSearchFilter(cfg *config.Config, source, category string) models.SearchFilter {
-	f := models.SearchFilter{Source: source}
+func buildSearchFilter(cfg *config.Config, sources []string, category string) models.SearchFilter {
+	f := models.SearchFilter{Sources: sources}
 
 	if category != "" {
 		for _, s := range cfg.Sources {
@@ -29,8 +29,8 @@ func buildSearchFilter(cfg *config.Config, source, category string) models.Searc
 		return f // category takes precedence — no further exclusions applied
 	}
 
-	if source != "" {
-		return f // explicit source — no exclusions needed
+	if len(sources) > 0 {
+		return f // explicit source(s) — no exclusions needed
 	}
 
 	// Default: exclude any source with search_by_default: false

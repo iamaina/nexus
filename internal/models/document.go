@@ -122,11 +122,58 @@ func (m *DocumentModel) Summary(ctx context.Context) ([]SourceSummary, error) {
 	return out, rows.Err()
 }
 
+// SourceStats returns per-source document count, chunk count, and most recent
+// ingest timestamp for every source that has at least one document in the DB.
+func (m *DocumentModel) SourceStats(ctx context.Context) ([]SourceStat, error) {
+	rows, err := m.DB.Query(ctx, `
+		SELECT
+			source_name,
+			COUNT(*)                                          AS doc_count,
+			COALESCE(SUM(chunk_count), 0)                    AS chunk_count,
+			TO_CHAR(MAX(ingest_time), 'YYYY-MM-DD HH24:MI')  AS last_ingest
+		FROM documents
+		GROUP BY source_name
+		ORDER BY source_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SourceStat
+	for rows.Next() {
+		var s SourceStat
+		if err := rows.Scan(&s.SourceName, &s.DocCount, &s.ChunkCount, &s.LastIngest); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // DeleteByPath removes a document and all its chunks (via CASCADE) by file path.
 // Returns nil if the document does not exist (idempotent).
 func (m *DocumentModel) DeleteByPath(ctx context.Context, filePath string) error {
 	_, err := m.DB.Exec(ctx, `DELETE FROM documents WHERE file_path = $1`, filePath)
 	return err
+}
+
+// CountBySource returns the document count and total chunk count for a source.
+func (m *DocumentModel) CountBySource(ctx context.Context, sourceName string) (docCount, chunkCount int, err error) {
+	err = m.DB.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM documents WHERE source_name = $1`,
+		sourceName,
+	).Scan(&docCount, &chunkCount)
+	return
+}
+
+// DeleteBySource removes all documents (and their chunks via CASCADE) for a source.
+// Returns the number of documents deleted.
+func (m *DocumentModel) DeleteBySource(ctx context.Context, sourceName string) (int64, error) {
+	tag, err := m.DB.Exec(ctx, `DELETE FROM documents WHERE source_name = $1`, sourceName)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // Insert upserts document metadata and returns the document ID.

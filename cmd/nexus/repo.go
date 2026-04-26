@@ -22,6 +22,13 @@ const repoScanMaxDepth = 6
 var repoCmd = &cobra.Command{
 	Use:   "repo",
 	Short: "Manage and locate git repositories",
+	Long: `Manage and locate git repositories across your configured repo roots.
+
+  nexus repo scan          — discover and register all repos
+  nexus repo list          — list registered repos with branch and status
+  nexus repo check <url>   — find an existing clone or suggest a placement
+
+Since: v0.1.0`,
 }
 
 // ── scan ─────────────────────────────────────────────────────────────────────
@@ -31,7 +38,9 @@ var repoScanCmd = &cobra.Command{
 	Short: "Scan all repo roots and register repositories in the database",
 	Long: `Walk every configured repo root, discover git repositories, and upsert
 them into the nexus database. Run once after setup, then nexus watch keeps
-the database current as new repos are cloned.`,
+the database current as new repos are cloned.
+
+Since: v0.1.0`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 		a, ok := ctx.Value(app.AppKey).(*app.Application)
@@ -83,6 +92,11 @@ func scanRepoRoot(ctx context.Context, a *app.Application, root config.RepoRoot)
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all registered repositories",
+	Long: `List all repositories registered in the nexus database, grouped by repo root.
+
+Shows local path, remote URL, branch, and dirty status for each repo.
+
+Since: v0.1.0`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 		a, ok := ctx.Value(app.AppKey).(*app.Application)
@@ -153,7 +167,9 @@ var repoCheckCmd = &cobra.Command{
 	Short: "Find an existing clone or suggest where to put a new one",
 	Long: `Given a git URL, nexus looks for an existing local clone. If found,
 it shows the path and current status. If not found, it infers a placement
-from how your existing repositories are organised and offers to clone it.`,
+from how your existing repositories are organised and offers to clone it.
+
+Since: v0.1.0`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()

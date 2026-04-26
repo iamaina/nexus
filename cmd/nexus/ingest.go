@@ -19,8 +19,23 @@ var force bool
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
 	Short: "Index documents from your configured source folders",
+	Long: `Index documents from your configured source folders.
+
+Walks every source defined in config.yaml, hashes each file, and skips
+those whose content has not changed since the last ingest.
+
+Since: v0.0.1`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
+
+		background, _ := cmd.Flags().GetBool("background")
+		if background {
+			if err := startBackground("Running nexus ingest", "ingest"); err != nil {
+				logger.Error(ctx, "background.failed", slog.Any("err", err))
+				os.Exit(1)
+			}
+			return
+		}
 
 		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
@@ -107,7 +122,7 @@ var ingestCmd = &cobra.Command{
 
 		// Ingest URL sources configured in config.yaml.
 		for _, u := range a.Config.URLs {
-			count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), force, false)
+			count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.ScopeURL, u.Name, u.Depth, parseDelay(u.Delay), force, false, u.Exclude)
 			if err != nil {
 				logger.Error(ctx, "url.source_failed",
 					slog.String("component", "ingestion"),
@@ -134,5 +149,6 @@ var ingestCmd = &cobra.Command{
 
 func init() {
 	ingestCmd.Flags().BoolVar(&force, "force", false, "Force re-ingestion (ignore dedup)")
+	ingestCmd.Flags().Bool("background", false, "Run ingest in the background; returns immediately and logs to ~/.config/nexus/logs/ingest.log")
 	RootCmd.AddCommand(ingestCmd)
 }

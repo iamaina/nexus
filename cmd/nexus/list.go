@@ -21,7 +21,9 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Show everything in your knowledge base",
 	Long: `Without --source: show a summary of each source (document and chunk counts).
-With --source: list all documents ingested from that source.`,
+With --source: list all documents ingested from that source.
+
+Since: v0.0.1`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 

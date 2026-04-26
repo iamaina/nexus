@@ -11,6 +11,86 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Chat — session navigation (Phase 3)**
+- `/sessions` — lists the 10 most recent chat sessions with date, opening question (derived from filename slug), and exchange count; shows total count when more than 10 exist; tab-completion wired for `/sessions`
+- `/resume <name>` — loads a past session from within the running chat without restarting from the shell; closes the current session file, opens the resumed file for appending, swaps history, and reprints the last 3 exchanges for immediate context; tab-completes all saved session names
+
+**Chat — status and health visibility (Phase 2)**
+- Startup banner — every session opens with a compact status block: `N/M sources indexed · K watching · model names`, default source list, and a warning for any sources with zero documents
+- `/status` — prints the full status report on demand mid-session: source counts, default vs opt-in lists, not-indexed sources, model names, and Ollama URL
+- `/sources` updated — every row now shows `●` (searched by default) or `○` (opt-in only) so you can see exactly what a bare question searches without consulting `config.yaml`
+- Prompt always shows active search scope: `[default] ❯` when no filter is set, `[wiki-cs] ❯` when a source filter is active, `[reference] ❯` for a category filter, `[wiki-cs · reference] ❯` when both are set — single consistent place, never scrolls away
+- `/category <name>` — restrict search to a category mid-session (e.g. `/category reference`); `/category clear` removes the filter; tab-completes category names from config; prompt updates immediately
+- `source:` removed from the startup header line — the prompt is the single source of truth for active filters
+
+**Chat — in-session discoverability (Phase 1)**
+- `/help` — prints all slash commands with descriptions directly in chat; no need to exit to look up a command
+- `/sources` — lists every configured source (file and URL) with its type, category, and live indexed document count; sources with zero docs are flagged with the ingest command to run; runs a single DB query per call
+- Tab completion — pressing Tab after `/` completes all slash commands; pressing Tab after `/source ` completes available source names from the active config; powered by readline's `PrefixCompleter`
+- Chat scroll: screen cleared on startup so shell history is not immediately visible when scrolling up; no scroll region or alternate screen (both conflict with iTerm2's native scrollback on manual scroll); header prints once and scrolls away naturally; proper pinned header is a post-MVP item requiring a bubbletea TUI
+- Resume now reprints the last 3 exchanges on load so the conversation context is immediately visible; earlier turns are noted with a count and pointer to the session file
+
+**Wikipedia — topic-focused ingestion replacing unbounded crawl**
+- Replaced the single `wikipedia` source (seed: main page, depth: unlimited) with four topic-specific sources: `wiki-cs`, `wiki-ai`, `wiki-sre`, `wiki-quantum`
+- Each source seeds from a curated Wikipedia Outline or topic article; depth 3 stays within the semantic cluster without following links to unrelated domains
+- All four sources share a namespace exclude list: `File:`, `Category:`, `Wikipedia:`, `Talk:`, `User:`, `Template:`, `Special:`, `Portal:`, `Help:`, `Module:`, `Draft:` — previously 16.4% of ingested pages were non-article content
+- `CrawlAndIngest`: visited map is now pre-seeded from the `documents` table on startup — restarts skip already-ingested pages without fetching them (each fetch costs a polite delay; 78K pages × 400ms = ~8 hours of wasted delay on restart); pre-seeding is bypassed when `--force` is set
+- `URLSource.ScopeURL` (`scope_url:` in config) — separates the crawl starting point from the link-filter prefix; when set, links are accepted if they fall under `scope_url` rather than the seed URL; allows a deep-linked seed (e.g. `/wiki/Outline_of_computer_science`) to discover all `/wiki/*` articles instead of only pages that start with the seed path; `ingest-url --scope-url` exposes the same control from the CLI
+
+**`nexus index` — vector index health monitoring and automated rebuild**
+- `nexus index status` — reports index state (healthy / reindex recommended / resize needed), chunk count at build time vs now, growth percentage, and the exact command to run
+- `nexus index rebuild` — runs `REINDEX INDEX CONCURRENTLY` (same lists, queries stay live); use when chunk count has grown 50–100% from build time
+- `nexus index rebuild --resize` — drops and recreates the index with an optimal `lists` value (`current_count / 1000`); use when chunk count has more than doubled
+- Both modes automatically raise `maintenance_work_mem` to 5 GB for the session and permanently fix the system setting to 2 GB via `ALTER SYSTEM` if it was below that — no `PGOPTIONS` workaround needed
+- Build metadata (chunk count, lists, timestamp) stored as a JSON comment on the index so `status` always has a baseline without extra tables
+- `nexus watch` runs a background index health check every 24 h and logs a warning (`index.reindex_recommended` or `index.rebuild_recommended`) if action is needed — no auto-rebuild, always user-driven
+- `make setup` now writes `NEXUS_DSN` to `~/.zshrc` so `psql "$NEXUS_DSN" -c "..."` works out of the box for anyone running the setup script
+
+**Bug fixes**
+- `nexus workspace scan` — new command: one-shot bootstrap that walks `roots.workspace`, generates `dir_structure.md`, and ingests it as source `workspace-structure`; `nexus organise` now requires this file to exist before proceeding and prints a clear error with the command to run if it is missing
+- `nexus watch`: workspace snapshot now refreshes every 24 h while watch is running, not only on startup — catches subdirectory and non-repo structural changes that fsnotify misses because the workspace watch is non-recursive
+- `nexus watch`: new repo detection (`checkNewRepo`) now also regenerates `dir_structure.md` — previously the DB was updated but the snapshot stayed stale
+- `nexus organise`: `collectFiles` now skips directories by name (`.git`, `node_modules`, `vendor`, `.direnv`, `.venv`, `.terraform`, etc.) AND by git repo detection (`isGitRepo` checks for a `.git` entry) — a workspace root like `~/ops-nexus` containing dozens of repos previously yielded 20 000+ candidate files; it now yields only the loose documents that sit outside any repo
+- `nexus organise`: files already present in the documents table are skipped without an LLM classification call — makes repeated runs idempotent
+- URL sources now support an `exclude` list — URL path substrings that are skipped during crawl discovery (never fetched or queued); same concept as the `exclude` field on file sources; kubernetes source now excludes `/_print/` and `/reference/kubectl/kubectl_` paths that 404 after the k8s docs reorg
+- `ingest`: `.jsonnet` and `.libsonnet` files were being routed to the Python/PDF extractor (which is only for PDFs) because they were missing from `codeExtensions`; they now use `ExtractPlainText` and ingest cleanly without requiring the Python venv
+- `ingest`: files with lines exceeding the 1 MB scanner buffer (`bufio.ErrTooLong`) now ingest with partial content instead of failing — the spans collected before the oversized line are returned without error; large minified JSON files no longer abort the ingest
+- `chunks.Store`: INSERT batch is now idempotent (`ON CONFLICT ... DO UPDATE`) — prevents duplicate key constraint violations if two ingest processes run concurrently against the same URLs
+
+- `/gl` commands now print the raw fetched list (with clickable links) before the LLM summary — the model was previously summarizing todos and dropping URLs, leaving only bare MR/issue numbers with no way to open them
+- `formatTodos`, `formatItemList`, `formatSingleIssue`, `formatSingleMR`: titles rendered as `[Title](url)` markdown links so glamour makes them clickable; bare numbers are only used as fallback when no URL is present
+
+**GitLab on-demand context in chat**
+- GitLab URLs pasted anywhere in a question are auto-fetched via `glab api` and injected as live context — issues, MRs, work items, and epics all work; fetching runs concurrently with the vector search
+- `/gl todos [host]` — fetches pending GitLab todos and asks the LLM to prioritise them; defaults to `gitlab.com`, pass a hostname for private instances
+- `/gl items <group-path|url>` — lists open work items / issues in a group; accepts either a path (`gitlab-com/gl-infra/software-delivery`) or a full GitLab URL; tries the work_items API first and falls back to issues for older instances
+- `internal/gitlab/fetcher.go` — new package: URL parsing, `glab api` invocation, JSON→text formatting for issues, MRs, todos, and item lists
+- `/gl` commands skip the vector search and send only the fetched data to the LLM; URL auto-detection in questions goes through the full search + fetched context together
+
+**IVFFlat vector index support**
+- `Search` now sets `ivfflat.probes = 10` before every query so the IVFFlat index is used with good recall at large scale (Wikipedia-sized datasets); default probes=1 misses many relevant results when chunks exceed ~100K rows
+- Index must be created once manually: `CREATE INDEX CONCURRENTLY chunks_embedding_idx ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 3000);` — recommended `lists` ≈ `row_count / 1000`
+
+**Bug fixes**
+- Chat: live source warning logs (`logger.Warn`) were printing to stderr while the search spinner was still active, causing lines like `⠼  searching...12:24:31 [WARN ] live source failed` to bleed together; spinner is now stopped before live sources execute; failed live sources are silently absent from context (no in-session log noise)
+
+**Terminal markdown rendering**
+- LLM responses in `nexus` (chat) and `nexus query` now render with full markdown formatting — bold, italic, headers, code blocks with syntax highlighting, bullet lists — using `glamour` (same library as `gh`)
+- TTY detection: rendered output on terminals; plain indented text when piped or redirected (safe for scripts and `grep`)
+- Chat: response is generated in full first (spinner shown), then rendered — removes the raw-token streaming artifact of partial markdown mid-print
+- `renderMarkdown(text, tty, cols)` shared helper in `cmd/nexus/chat.go`; `isTerminal()` extracted so `query.go` can use both without duplication
+
+**`/source` slash command in chat**
+- `/source <name> [name2]` — switch source filter mid-session; accepts space- or comma-separated names (`/source linux-commands SRE-handbook` or `/source linux-commands,SRE-handbook`)
+- `/source` or `/source show` — display the current active filter
+- `/source clear` — remove source restriction and return to default search
+- The pinned sticky header rewrites in-place (ANSI save/restore cursor) immediately on change — no restart needed
+
+**Multi-source search and source header**
+- `--source` on `nexus` (chat) and `nexus query` now accepts multiple values: `--source a --source b` or `--source a,b`; results are ORed across all named sources
+- Active source(s) shown in the sticky header when `--source` is set: `nexus v0.3.0 · model · threshold 0.70 · source: linux-commands,SRE-handbook · pid 123`
+- `SearchFilter.Source string` replaced by `SearchFilter.Sources []string` — SQL generates one ILIKE clause per source joined with OR
+
 **Web page ingestion (`nexus ingest-url`)**
 - `nexus ingest-url <url>` — fetch a web page, extract its content, and ingest it into the search index; the URL is the document identity for dedup (unchanged pages skipped on re-run)
 - `--recursive` — crawl all pages within the same URL path prefix; each page fetched once and reused for both ingestion and link discovery (no double-fetch)
@@ -86,6 +166,52 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `nexus watch --list` — prints all configured watchers (personal intake dirs, source tickers, workspace root, repo roots) without starting
 - `classifier.Classification` gains `topic` field — LLM returns main subject for technical docs, used by organiser to match existing directories
 - `make setup` creates repo root directories (`mkdir -p`) when configured, preventing missing-directory warnings on first `nexus watch` start
+
+**Bug fixes**
+- Background jobs (`nexus ingest --background`, `nexus ingest-url --background`) now default to `info` log level — inheriting `logLevel: debug` from config produced unreadably large log files; override with `NEXUS_LOG_LEVEL=debug` in the shell if verbose output is needed
+- Chat: `--source <name>` with an un-ingested source no longer silently calls the LLM with empty context (which caused hallucinated answers citing training-data sources like "progit"); now prints `⚠ Source "<name>" has no indexed content — run: nexus ingest` and skips the LLM call
+- Chat: scroll region exit no longer jumps to the last terminal row, which left a screenful of blank lines after short sessions; the shell prompt now appears immediately after the session summary line
+
+**`nexus source rm` — remove a source from the index**
+- `nexus source rm <name>` — shows doc count and chunk count for the named source, asks for confirmation, then deletes all its documents and chunks from the database; source entry in `config.yaml` is not touched
+- `DocumentModel.CountBySource` — returns doc count and total chunk count for a source in one query
+- `DocumentModel.DeleteBySource` — deletes all documents for a source (chunks cascade); returns rows affected
+
+**`nexus ingest --background`**
+- `nexus ingest --background` — runs the full batch ingest (file sources + URL sources) detached from the terminal, logging to `~/.config/nexus/logs/ingest.log`; returns immediately with PID and log path
+- Background logic extracted into `startBackground(label, logFile string)` in `cmd/nexus/background.go` — shared by `nexus ingest` and `nexus ingest-url`
+
+**`nexus ingest-url` — save and background flags**
+- `--save` — persists the URL source to `config.yaml` immediately (before the crawl begins) so `nexus ingest` and `nexus watch` pick it up automatically on future runs; upserts by name if the source already exists
+- `--watch` — when used with `--save`, sets `watch: true` on the saved source so `nexus watch` polls it on its interval
+- `--background` — re-execs the crawl detached from the terminal (`Setsid`); returns immediately and prints the PID and log path (`~/.config/nexus/logs/ingest-url-<name>.log`)
+- `--save` and `--background` compose: config is written synchronously before the child is launched, so the saved source is always consistent regardless of how the crawl ends
+
+**`nexus source status` — ingestion status command**
+- `nexus source status` — shows all configured sources (file and URL) with per-source doc count, chunk count, last ingest timestamp, watch interval, and `opt-in` visibility flag
+- Sources in `config.yaml` that have not yet been ingested appear in the table with `—` counts so you can see at a glance what still needs indexing
+- Summary line: total docs · total chunks · count of sources not yet ingested with reminder to run `nexus ingest`
+- `SourceStat` type in `internal/models/types.go` — carries per-source stats with a nullable `*string LastIngest` (nil = never ingested)
+- `DocumentModel.SourceStats(ctx)` — aggregates doc count, chunk count, and most-recent ingest time per source in one SQL query
+
+**URL ticker progress logging**
+- `nexus watch` now logs `⟳ Crawling "<name>" (<url>)…` before each URL poll begins — previously the ticker was silent until completion
+- Shows `✓ "<name>": up to date (no changes)` when a crawl completes with zero new or updated pages (was previously silent)
+
+**SRE reference library in config.yaml**
+- 17 reference documentation URL sources added to `config.yaml`: `kubernetes`, `docker`, `terraform`, `prometheus`, `helm`, `golang`, `postgresql`, `nginx`, `vault`, `ansible`, `grafana`, `gitlab-ci`, `ruby`, `bash`, `linux-commands`, `opentelemetry`, `consul`
+- All set `search_by_default: false` and `category: reference` — opt-in via `--category reference` or `--source <name>`
+- `linux-commands` (GeeksforGeeks) includes `delay: 500ms` for polite crawling
+- Depths tuned per site: kubernetes depth 3, all others depth 1–2
+
+**Version annotations in command help**
+- Every command's `--help` output now shows `Since: vX.Y.Z` so it's clear which version introduced each command or flag
+- Flags added after a command's debut are annotated with `(added vX.Y.Z)` in their description
+- Enables backport targeting: a bug in `--category` (added v0.2.0) only needs backporting to `maint/v0.2.0`, not `maint/v0.1.0`
+
+**Source categories — setup and reconfigure integration**
+- `make setup` now prompts for URL sources during initial setup: URL, name, category, `search_by_default` (default yes), recursive crawl; writes a `urls:` section to `config.yaml`
+- `nexus setup-reconfigure` Sources menu [2] rewritten: shows all sources (file + URL) with their `category` and `search_by_default` values; select a number to edit these fields or prefix with `r` to remove; editing toggles `search_by_default` or sets a category without re-running setup
 
 **Source categories and default search control**
 - `search_by_default: false` on any `sources:` or `urls:` entry — that source is excluded from all queries unless explicitly requested with `--source <name>`; use this for large reference sources like Wikipedia that would otherwise dominate results
