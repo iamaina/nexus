@@ -97,6 +97,12 @@ Since: v0.1.0`,
 			}
 		}
 
+		// Require a workspace map before proceeding — organise uses it for
+		// smart placement decisions. nexus workspace scan generates it.
+		if !checkWorkspaceMap(a) {
+			return
+		}
+
 		home, _ := os.UserHomeDir()
 
 		// Build plan: classify each file.
@@ -161,8 +167,30 @@ Since: v0.1.0`,
 	},
 }
 
+// skipDirs are directory names that collectFiles never descends into.
+// This prevents organise from classifying files that belong to a git repo,
+// a package manager cache, or a generated environment — none of which are
+// "loose documents" that need to be filed.
+var skipDirs = map[string]bool{
+	".git":         true, // git repo root — treat the repo as a unit, not its files
+	"node_modules": true,
+	"vendor":       true,
+	".direnv":      true,
+	"__pycache__":  true,
+	".venv":        true,
+	".tox":         true,
+	".mypy_cache":  true,
+	"dist":         true,
+	"build":        true,
+	".terraform":   true,
+	".cache":       true,
+}
+
 // collectFiles returns all supported files in dir.
-// If recursive is true, it walks all subdirectories.
+// If recursive is true it walks subdirectories, skipping:
+//   - directories whose name appears in skipDirs (caches, build outputs, etc.)
+//   - directories that ARE git repos — repos are atomic units; their files
+//     belong to the repo, not to the loose-document organiser
 func collectFiles(dir string, recursive bool) ([]string, error) {
 	var files []string
 	entries, err := os.ReadDir(dir)
@@ -172,7 +200,7 @@ func collectFiles(dir string, recursive bool) ([]string, error) {
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
 		if e.IsDir() {
-			if recursive {
+			if recursive && !skipDirs[e.Name()] && !isGitRepo(path) {
 				sub, err := collectFiles(path, true)
 				if err != nil {
 					return nil, err
@@ -187,6 +215,13 @@ func collectFiles(dir string, recursive bool) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// isGitRepo reports whether dir contains a .git entry (file or directory),
+// making it a git repository root that collectFiles should not descend into.
+func isGitRepo(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 func init() {

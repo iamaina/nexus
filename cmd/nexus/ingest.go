@@ -122,7 +122,7 @@ Since: v0.0.1`,
 
 		// Ingest URL sources configured in config.yaml.
 		for _, u := range a.Config.URLs {
-			count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), force, false)
+			count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), force, false, u.Exclude)
 			if err != nil {
 				logger.Error(ctx, "url.source_failed",
 					slog.String("component", "ingestion"),

@@ -11,6 +11,51 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Bug fixes**
+- `nexus workspace scan` — new command: one-shot bootstrap that walks `roots.workspace`, generates `dir_structure.md`, and ingests it as source `workspace-structure`; `nexus organise` now requires this file to exist before proceeding and prints a clear error with the command to run if it is missing
+- `nexus watch`: workspace snapshot now refreshes every 24 h while watch is running, not only on startup — catches subdirectory and non-repo structural changes that fsnotify misses because the workspace watch is non-recursive
+- `nexus watch`: new repo detection (`checkNewRepo`) now also regenerates `dir_structure.md` — previously the DB was updated but the snapshot stayed stale
+- `nexus organise`: `collectFiles` now skips directories by name (`.git`, `node_modules`, `vendor`, `.direnv`, `.venv`, `.terraform`, etc.) AND by git repo detection (`isGitRepo` checks for a `.git` entry) — a workspace root like `~/ops-nexus` containing dozens of repos previously yielded 20 000+ candidate files; it now yields only the loose documents that sit outside any repo
+- `nexus organise`: files already present in the documents table are skipped without an LLM classification call — makes repeated runs idempotent
+- URL sources now support an `exclude` list — URL path substrings that are skipped during crawl discovery (never fetched or queued); same concept as the `exclude` field on file sources; kubernetes source now excludes `/_print/` and `/reference/kubectl/kubectl_` paths that 404 after the k8s docs reorg
+- `ingest`: `.jsonnet` and `.libsonnet` files were being routed to the Python/PDF extractor (which is only for PDFs) because they were missing from `codeExtensions`; they now use `ExtractPlainText` and ingest cleanly without requiring the Python venv
+- `ingest`: files with lines exceeding the 1 MB scanner buffer (`bufio.ErrTooLong`) now ingest with partial content instead of failing — the spans collected before the oversized line are returned without error; large minified JSON files no longer abort the ingest
+- `chunks.Store`: INSERT batch is now idempotent (`ON CONFLICT ... DO UPDATE`) — prevents duplicate key constraint violations if two ingest processes run concurrently against the same URLs
+
+- `/gl` commands now print the raw fetched list (with clickable links) before the LLM summary — the model was previously summarizing todos and dropping URLs, leaving only bare MR/issue numbers with no way to open them
+- `formatTodos`, `formatItemList`, `formatSingleIssue`, `formatSingleMR`: titles rendered as `[Title](url)` markdown links so glamour makes them clickable; bare numbers are only used as fallback when no URL is present
+
+**GitLab on-demand context in chat**
+- GitLab URLs pasted anywhere in a question are auto-fetched via `glab api` and injected as live context — issues, MRs, work items, and epics all work; fetching runs concurrently with the vector search
+- `/gl todos [host]` — fetches pending GitLab todos and asks the LLM to prioritise them; defaults to `gitlab.com`, pass a hostname for private instances
+- `/gl items <group-path|url>` — lists open work items / issues in a group; accepts either a path (`gitlab-com/gl-infra/software-delivery`) or a full GitLab URL; tries the work_items API first and falls back to issues for older instances
+- `internal/gitlab/fetcher.go` — new package: URL parsing, `glab api` invocation, JSON→text formatting for issues, MRs, todos, and item lists
+- `/gl` commands skip the vector search and send only the fetched data to the LLM; URL auto-detection in questions goes through the full search + fetched context together
+
+**IVFFlat vector index support**
+- `Search` now sets `ivfflat.probes = 10` before every query so the IVFFlat index is used with good recall at large scale (Wikipedia-sized datasets); default probes=1 misses many relevant results when chunks exceed ~100K rows
+- Index must be created once manually: `CREATE INDEX CONCURRENTLY chunks_embedding_idx ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 3000);` — recommended `lists` ≈ `row_count / 1000`
+
+**Bug fixes**
+- Chat: live source warning logs (`logger.Warn`) were printing to stderr while the search spinner was still active, causing lines like `⠼  searching...12:24:31 [WARN ] live source failed` to bleed together; spinner is now stopped before live sources execute; failed live sources are silently absent from context (no in-session log noise)
+
+**Terminal markdown rendering**
+- LLM responses in `nexus` (chat) and `nexus query` now render with full markdown formatting — bold, italic, headers, code blocks with syntax highlighting, bullet lists — using `glamour` (same library as `gh`)
+- TTY detection: rendered output on terminals; plain indented text when piped or redirected (safe for scripts and `grep`)
+- Chat: response is generated in full first (spinner shown), then rendered — removes the raw-token streaming artifact of partial markdown mid-print
+- `renderMarkdown(text, tty, cols)` shared helper in `cmd/nexus/chat.go`; `isTerminal()` extracted so `query.go` can use both without duplication
+
+**`/source` slash command in chat**
+- `/source <name> [name2]` — switch source filter mid-session; accepts space- or comma-separated names (`/source linux-commands SRE-handbook` or `/source linux-commands,SRE-handbook`)
+- `/source` or `/source show` — display the current active filter
+- `/source clear` — remove source restriction and return to default search
+- The pinned sticky header rewrites in-place (ANSI save/restore cursor) immediately on change — no restart needed
+
+**Multi-source search and source header**
+- `--source` on `nexus` (chat) and `nexus query` now accepts multiple values: `--source a --source b` or `--source a,b`; results are ORed across all named sources
+- Active source(s) shown in the sticky header when `--source` is set: `nexus v0.3.0 · model · threshold 0.70 · source: linux-commands,SRE-handbook · pid 123`
+- `SearchFilter.Source string` replaced by `SearchFilter.Sources []string` — SQL generates one ILIKE clause per source joined with OR
+
 **Web page ingestion (`nexus ingest-url`)**
 - `nexus ingest-url <url>` — fetch a web page, extract its content, and ingest it into the search index; the URL is the document identity for dedup (unchanged pages skipped on re-run)
 - `--recursive` — crawl all pages within the same URL path prefix; each page fetched once and reused for both ingestion and link discovery (no double-fetch)

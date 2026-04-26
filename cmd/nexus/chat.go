@@ -9,8 +9,11 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/chzyer/readline"
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/config"
+	"github.com/iamaina/nexus/internal/gitlab"
 	"github.com/iamaina/nexus/internal/live"
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/iamaina/nexus/internal/models"
@@ -33,6 +36,12 @@ const (
 // cs holds the active colour sequences.
 // All fields are empty strings when stdout is not a TTY (piped/redirected).
 type cs struct{ reset, bold, dim, green, cyan, gray string }
+
+// isTerminal returns true when stdout is an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
 
 func newCS() cs {
 	fi, err := os.Stdout.Stat()
@@ -92,24 +101,34 @@ func startSpinner(label string, tty bool) func() {
 	}
 }
 
-// ── indentWriter ─────────────────────────────────────────────────────────────
+// ── Markdown renderer ────────────────────────────────────────────────────────
 
-// indentWriter inserts a fixed prefix after every newline (and once at the
-// start) so streamed LLM responses stay visually aligned with source lines.
-type indentWriter struct {
-	w       io.Writer
-	prefix  string
-	started bool
-}
-
-func (iw *indentWriter) Write(p []byte) (int, error) {
-	if !iw.started {
-		iw.started = true
-		_, _ = io.WriteString(iw.w, iw.prefix)
+// renderMarkdown renders markdown text with glamour when tty is true.
+// Falls back to plain indented text on non-tty (piped) output.
+func renderMarkdown(text string, tty bool, cols int) string {
+	if !tty {
+		// Plain indented text for piped output
+		var sb strings.Builder
+		for line := range strings.SplitSeq(text, "\n") {
+			sb.WriteString("  ")
+			sb.WriteString(line)
+			sb.WriteByte('\n')
+		}
+		return sb.String()
 	}
-	s := strings.ReplaceAll(string(p), "\n", "\n"+iw.prefix)
-	_, err := iw.w.Write([]byte(s))
-	return len(p), err
+	width := max(cols-4, 40) // leave margin
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return "  " + strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n  ") + "\n"
+	}
+	rendered, err := r.Render(text)
+	if err != nil {
+		return "  " + strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n  ") + "\n"
+	}
+	return rendered
 }
 
 // ── Command vars ─────────────────────────────────────────────────────────────
@@ -117,9 +136,25 @@ func (iw *indentWriter) Write(p []byte) (int, error) {
 var (
 	chatModel    string
 	chatNoLive   bool
-	chatSource   string
+	chatSources  []string
 	chatCategory string
 )
+
+// gitLabHosts returns all GitLab hostnames from the repo roots config so the
+// gitlab fetcher recognises private instances (ops.gitlab.net, pre.gitlab.com…).
+func gitLabHosts(cfg *config.Config) []string {
+	seen := make(map[string]bool)
+	var hosts []string
+	for _, repo := range cfg.Roots.Repos {
+		for _, h := range repo.Hosts {
+			if !seen[h] {
+				seen[h] = true
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return hosts
+}
 
 // ── Shared completions helper ─────────────────────────────────────────────────
 
@@ -182,14 +217,55 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	}
 
 	pid := os.Getpid()
-	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
-	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f  %s·%s  pid %d\n",
+
+	// redrawHeader rewrites the pinned header line in-place (row 2) using
+	// ANSI save/restore cursor so the scroll region content is undisturbed.
+	// Called whenever chatSources changes mid-session via /source.
+	redrawHeader := func() {
+		if !tty {
+			return
+		}
+		srcPart := ""
+		if len(chatSources) > 0 {
+			srcPart = c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
+		}
+		vis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
+		if len(chatSources) > 0 {
+			vis = fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  source: %s  ·  pid %d",
+				Version, sum.Model(), threshold, strings.Join(chatSources, ","), pid)
+		}
+		// \033[s save cursor, \033[2;1H jump to header row, \033[K clear line, rewrite, \033[u restore
+		fmt.Printf("\033[s\033[2;1H%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s  %s·%s  pid %d\033[K\033[u",
+			pad(len(vis), cols),
+			c.bold+c.cyan, Version, c.reset,
+			c.dim, c.reset,
+			c.bold, sum.Model(), c.reset,
+			c.dim, c.reset,
+			threshold,
+			srcPart,
+			c.dim, c.reset,
+			pid,
+		)
+	}
+
+	srcLabel := ""
+	if len(chatSources) > 0 {
+		srcLabel = "  ·  source: " + strings.Join(chatSources, ",")
+	}
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f%s  ·  pid %d", Version, sum.Model(), threshold, srcLabel, pid)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s  %s·%s  pid %d\n",
 		pad(len(headerVis), cols),
 		c.bold+c.cyan, Version, c.reset,
 		c.dim, c.reset,
 		c.bold, sum.Model(), c.reset,
 		c.dim, c.reset,
 		threshold,
+		func() string {
+			if len(chatSources) > 0 {
+				return c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
+			}
+			return ""
+		}(),
 		c.dim, c.reset,
 		pid,
 	)
@@ -316,6 +392,92 @@ loop:
 				break loop
 			}
 
+			// ── Slash commands ───────────────────────────────────────────────
+			if rest, ok := strings.CutPrefix(question, "/source"); ok {
+				arg := strings.TrimSpace(rest)
+				switch arg {
+				case "", "show":
+					if len(chatSources) == 0 {
+						fmt.Printf("  %sActive filter: (all default sources)%s\n\n", c.dim, c.reset)
+					} else {
+						fmt.Printf("  %sActive filter:%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
+					}
+				case "clear", "off", "none":
+					chatSources = nil
+					fmt.Printf("  %sSource filter cleared — searching all default sources%s\n\n", c.dim, c.reset)
+					redrawHeader()
+				default:
+					// Accept space- or comma-separated names: "/source a b" or "/source a,b"
+					parts := strings.FieldsFunc(arg, func(r rune) bool { return r == ',' || r == ' ' })
+					var sources []string
+					for _, p := range parts {
+						if p = strings.TrimSpace(p); p != "" {
+							sources = append(sources, p)
+						}
+					}
+					chatSources = sources
+					fmt.Printf("  %sSource filter →%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
+					redrawHeader()
+				}
+				continue
+			}
+
+			// ── /gl command — on-demand GitLab context ───────────────────────
+			if rest, ok := strings.CutPrefix(question, "/gl"); ok {
+				arg := strings.TrimSpace(rest)
+
+				var glOut live.Output
+				var syntheticQ string
+
+				switch {
+				case arg == "" || arg == "todos":
+					glOut = gitlab.FetchTodos(ctx, "gitlab.com")
+					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case strings.HasPrefix(arg, "todos "):
+					host := strings.TrimSpace(strings.TrimPrefix(arg, "todos "))
+					glOut = gitlab.FetchTodos(ctx, host)
+					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case strings.HasPrefix(arg, "items "):
+					groupArg := strings.TrimSpace(strings.TrimPrefix(arg, "items "))
+					host, groupPath := gitlab.ParseGroupArg(groupArg)
+					glOut = gitlab.FetchGroupItems(ctx, host, groupPath)
+					syntheticQ = fmt.Sprintf("What is available to pick up in %s? Summarise the open items by priority and suggest where to start.", groupPath)
+				default:
+					fmt.Printf("  Unknown /gl command: %q\n  Available:\n    /gl todos [host]       — your pending todos\n    /gl items <group|url>  — open items in a group\n\n", arg)
+					continue
+				}
+
+				if glOut.Err != nil {
+					fmt.Printf("  %s✗ %s: %v%s\n\n", c.dim, glOut.Name, glOut.Err, c.reset)
+					continue
+				}
+
+				fmt.Printf("  %s⚡ %s%s\n\n", c.dim, glOut.Name, c.reset)
+				// Print the raw list first — URLs are always visible here regardless
+				// of what the LLM chooses to include in its summary.
+				fmt.Print(renderMarkdown(glOut.Text, tty, cols))
+
+				genStop := startSpinner("generating…", tty)
+				answer, genErr := sum.StreamChat(ctx, io.Discard, history, syntheticQ, nil, []live.Output{glOut})
+				genStop()
+				if genErr != nil {
+					if ctx.Err() != nil {
+						break loop
+					}
+					fmt.Printf("  generate error: %v\n\n", genErr)
+					continue
+				}
+				fmt.Print(renderMarkdown(answer, tty, cols))
+				fmt.Println(c.sep(cols))
+				fmt.Println()
+
+				history = append(history,
+					summarizer.ChatMessage{Role: "user", Content: syntheticQ},
+					summarizer.ChatMessage{Role: "assistant", Content: answer},
+				)
+				continue
+			}
+
 			fmt.Println()
 
 			// Embed + search
@@ -331,7 +493,7 @@ loop:
 				continue
 			}
 
-			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSource, chatCategory))
+			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSources, chatCategory))
 			if err != nil {
 				stop()
 				if ctx.Err() != nil {
@@ -344,10 +506,10 @@ loop:
 			// If --source was given but the vector search returned nothing, the
 			// source almost certainly has no indexed content. Warn and skip the
 			// LLM call — otherwise the model hallucinates from training data.
-			if len(candidates) == 0 && chatSource != "" {
+			if len(candidates) == 0 && len(chatSources) > 0 {
 				stop()
 				fmt.Printf("  %s⚠  Source %q has no indexed content — run: nexus ingest%s\n\n",
-					c.dim, chatSource, c.reset)
+					c.dim, strings.Join(chatSources, ", "), c.reset)
 				continue
 			}
 
@@ -384,21 +546,22 @@ loop:
 				results = results[:12]
 			}
 
-			// Live context
+			stop() // clear spinner before live sources so their output doesn't bleed onto the spinner line
+
+			// Live context + GitLab URL auto-detection (run concurrently)
 			var liveOutputs []live.Output
+			glCh := make(chan []live.Output, 1)
+			go func() {
+				glCh <- gitlab.ExtractAndFetch(ctx, question, gitLabHosts(a.Config))
+			}()
+
 			if !chatNoLive {
 				liveSources, liveErr := a.ContextSources.List(ctx)
 				if liveErr == nil && len(liveSources) > 0 {
 					liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
-					for _, o := range liveOutputs {
-						if o.Err != nil {
-							logger.Warn(ctx, "live source failed", "name", o.Name, "err", o.Err)
-						}
-					}
 				}
 			}
-
-			stop() // clear spinner
+			liveOutputs = append(<-glCh, liveOutputs...)
 
 			// Source attribution
 			var srcParts []string
@@ -428,18 +591,19 @@ loop:
 					c.dim, threshold, c.reset)
 			}
 
-			// Stream response
-			w := &indentWriter{w: os.Stdout, prefix: "  "}
-			answer, err := sum.StreamChat(ctx, w, history, question, results, liveOutputs)
+			// Generate response — stream to discard, then glamour-render the full answer
+			genStop := startSpinner("generating…", tty)
+			answer, err := sum.StreamChat(ctx, io.Discard, history, question, results, liveOutputs)
+			genStop()
 			if err != nil {
-				fmt.Println()
 				if ctx.Err() != nil {
 					break loop
 				}
 				fmt.Printf("  generate error: %v\n\n", err)
 				continue
 			}
-			fmt.Print("\n\n")
+			fmt.Print(renderMarkdown(answer, tty, cols))
+			fmt.Println()
 
 			// "Open to read more:" — unique file paths from matched results
 			home, _ := os.UserHomeDir()
@@ -513,7 +677,7 @@ func init() {
 	// Chat flags live on RootCmd — bare `nexus` IS the chat interface.
 	RootCmd.Flags().StringVar(&chatModel, "model", "", "generation model (overrides config)")
 	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
-	RootCmd.Flags().StringVar(&chatSource, "source", "", "restrict search to a source or filename")
+	RootCmd.Flags().StringSliceVar(&chatSources, "source", nil, "restrict search to one or more sources (repeatable: --source a --source b, or comma-separated: --source a,b)")
 	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work) (added v0.2.0)")
 }
 

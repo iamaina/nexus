@@ -144,8 +144,10 @@ func ingestURLBody(ctx context.Context, a *app.Application, rawURL, source strin
 // within the same scheme+host+path prefix. Each page is fetched once — the body
 // is reused for both ingestion and link extraction. delay is inserted between
 // requests to avoid hammering the server (0 = no delay).
+// excludePatterns are URL path substrings; any discovered link whose URL contains
+// one of these strings is skipped entirely (never fetched or queued).
 // Returns the number of pages ingested (dry-run: pages that would be ingested).
-func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source string, maxDepth int, delay time.Duration, force, dryRun bool) (int, error) {
+func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source string, maxDepth int, delay time.Duration, force, dryRun bool, excludePatterns []string) (int, error) {
 	seed, err := url.Parse(seedURL)
 	if err != nil {
 		return 0, fmt.Errorf("parse seed URL: %w", err)
@@ -219,12 +221,25 @@ func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source str
 			if err != nil || visited[resolved] {
 				continue
 			}
+			if isExcluded(resolved, excludePatterns) {
+				continue
+			}
 			visited[resolved] = true
 			queue = append(queue, entry{resolved, cur.depth + 1})
 		}
 	}
 
 	return ingested, nil
+}
+
+// isExcluded reports whether rawURL contains any of the given substrings.
+func isExcluded(rawURL string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.Contains(rawURL, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveLink resolves href relative to base, returning the absolute URL only

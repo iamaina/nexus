@@ -22,7 +22,7 @@ nexus --resume 2026-04-20_14-32_praefect           # continue a saved session (t
 | `--resume string` | "" | Continue a saved session (tab-complete with session names) |
 | `--model string` | "" | Override generation model for this session |
 | `--no-live` | false | Skip live context sources (kubectl, terraform, etc.) |
-| `--source string` | "" | Restrict search to one source name or filename fragment |
+| `--source string` | "" | Restrict search to one or more sources (repeatable: `--source a --source b`, or comma-separated: `--source a,b`) |
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
 
@@ -45,6 +45,23 @@ The header line (`nexus vX.Y.Z · model · threshold · pid`) is pinned — it s
 answers scroll. The PID is shown for easy signal tracing:
 ```
 kill $(cat ~/.config/nexus/nexus.pid)
+```
+
+**In-session slash commands:**
+
+| Command | Description |
+|---|---|
+| `/source <name>` | Restrict search to one or more sources (space- or comma-separated) |
+| `/source clear` | Remove source restriction |
+| `/source` or `/source show` | Show current active filter |
+| `/gl todos` | Fetch your pending GitLab todos and get a prioritised recommendation |
+| `/gl todos <host>` | Same but for a specific GitLab instance (e.g. `ops.gitlab.net`) |
+| `/gl items <group-path\|url>` | List open work items / issues in a GitLab group |
+
+GitLab URLs pasted anywhere in your question are **auto-fetched** — no slash command needed:
+```
+What is this issue about? https://gitlab.com/namespace/project/-/issues/123
+What changed in https://gitlab.com/namespace/project/-/merge_requests/456?
 ```
 
 ---
@@ -199,6 +216,26 @@ nexus organise --dry-run ~/Downloads                # show plan without moving a
 
 ---
 
+## `nexus workspace`
+
+Commands for generating and inspecting the workspace structure map.
+
+### `nexus workspace scan`
+
+Walks `roots.workspace`, detects all git repos, and writes `dir_structure.md` at the workspace root. Also ingests the file as source `workspace-structure` so it is immediately queryable.
+
+This is the bootstrap command — run it once on first setup, or any time you want to force an immediate refresh without waiting for the next `nexus watch` cycle.
+
+**`nexus organise` requires this file to exist before it will proceed.**
+
+```bash
+nexus workspace scan
+```
+
+`nexus watch` keeps the map current automatically (regenerated on startup, every 24 h, and whenever a new repo is detected). `nexus workspace scan` is only needed for the initial run or manual refreshes.
+
+---
+
 ## `nexus watch`
 
 Monitors multiple directory types concurrently. Designed to run as a background service via `make watch-install`.
@@ -261,7 +298,7 @@ nexus query "What was the Canva invoice for?"
 | Flag | Default | Description |
 |---|---|---|
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
-| `--source string` | "" | Restrict search to documents from one source name or filename fragment |
+| `--source string` | "" | Restrict search to one or more sources (repeatable or comma-separated) |
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--model string` | "" | Override the generation model for this query |
 | `--sources` | false | Print retrieved source chunks before the answer |
