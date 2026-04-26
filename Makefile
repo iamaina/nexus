@@ -185,7 +185,7 @@ setup:
 	psql -U $$USER -h localhost -d opsnexus -c "GRANT ALL ON SCHEMA public TO vaultuser;"
 
 	@echo ""
-	@echo "5. Exporting PG_PASSWORD for the Go app..."
+	@echo "5. Exporting PG_PASSWORD and NEXUS_DSN for the Go app..."
 	@PASSWORD=$$(cat .pgpassword); \
 	if ! grep -q "PG_PASSWORD" ~/.zshrc 2>/dev/null; then \
 		echo "export PG_PASSWORD=$$PASSWORD" >> ~/.zshrc; \
@@ -193,6 +193,10 @@ setup:
 	else \
 		sed -i '' "s|^export PG_PASSWORD=.*|export PG_PASSWORD=$$PASSWORD|" ~/.zshrc; \
 		echo "   Updated PG_PASSWORD in ~/.zshrc"; \
+	fi; \
+	if ! grep -q "NEXUS_DSN" ~/.zshrc 2>/dev/null; then \
+		echo 'export NEXUS_DSN="postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> ~/.zshrc; \
+		echo "   Added NEXUS_DSN to ~/.zshrc"; \
 	fi; \
 	export PG_PASSWORD=$$PASSWORD; \
 	rm -f .pgpassword
