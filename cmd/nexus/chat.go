@@ -192,7 +192,7 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 
 	c := newCS()
 	tty := c.reset != ""
-	cols, rows := termSize()
+	cols, _ := termSize()
 
 	threshold := queryThreshold
 	if threshold == 0 {
@@ -213,54 +213,30 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	var logFile *os.File
 
 	// ── Header ───────────────────────────────────────────────────────────────
+	// Clear the screen on startup so chat content begins at the top.
+	// No alternate screen or scroll region — both cause terminal-specific
+	// scroll conflicts. The header is printed once and scrolls away naturally
+	// as the session grows; scrolling up shows previous chat turns.
 	if tty {
-		// Enter the alternate screen buffer — isolates nexus from the normal
-		// terminal scrollback. Without this, scrolling up reveals shell history
-		// (previous commands) instead of chat content, and the pinned header
-		// drifts because the terminal scrolls its own buffer, not the app's.
-		// On exit the original terminal is restored exactly as it was.
-		fmt.Print("\033[?1049h")   // enter alternate screen
-		fmt.Print("\033[2J\033[H") // clear screen
+		fmt.Print("\033[2J\033[H") // clear screen, cursor home
 	}
 
-	pid := os.Getpid()
-
-	// redrawHeader rewrites the pinned header line in-place (row 2) using
-	// ANSI save/restore cursor so the scroll region content is undisturbed.
-	// Called whenever chatSources changes mid-session via /source.
+	// redrawHeader prints a compact context line after /source changes so the
+	// active filter is always visible without a pinned header.
 	redrawHeader := func() {
-		if !tty {
+		if !tty || len(chatSources) == 0 {
 			return
 		}
-		srcPart := ""
-		if len(chatSources) > 0 {
-			srcPart = c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
-		}
-		vis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
-		if len(chatSources) > 0 {
-			vis = fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  source: %s  ·  pid %d",
-				Version, sum.Model(), threshold, strings.Join(chatSources, ","), pid)
-		}
-		// \033[s save cursor, \033[2;1H jump to header row, \033[K clear line, rewrite, \033[u restore
-		fmt.Printf("\033[s\033[2;1H%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s  %s·%s  pid %d\033[K\033[u",
-			pad(len(vis), cols),
-			c.bold+c.cyan, Version, c.reset,
-			c.dim, c.reset,
-			c.bold, sum.Model(), c.reset,
-			c.dim, c.reset,
-			threshold,
-			srcPart,
-			c.dim, c.reset,
-			pid,
-		)
+		fmt.Printf("  %s● source: %s%s\n\n",
+			c.dim, strings.Join(chatSources, ", "), c.reset)
 	}
 
 	srcLabel := ""
 	if len(chatSources) > 0 {
 		srcLabel = "  ·  source: " + strings.Join(chatSources, ",")
 	}
-	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f%s  ·  pid %d", Version, sum.Model(), threshold, srcLabel, pid)
-	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s  %s·%s  pid %d\n",
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f%s", Version, sum.Model(), threshold, srcLabel)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s\n",
 		pad(len(headerVis), cols),
 		c.bold+c.cyan, Version, c.reset,
 		c.dim, c.reset,
@@ -273,8 +249,6 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 			}
 			return ""
 		}(),
-		c.dim, c.reset,
-		pid,
 	)
 
 	// ── Load existing session if resuming ────────────────────────────────────
@@ -307,33 +281,6 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 
 	fmt.Println(c.sep(cols))
 	fmt.Println()
-
-	// ── Sticky header via terminal scroll region ──────────────────────────────
-	// After printing the header we fix a scroll region that begins on the next
-	// row, so the header rows are outside the scrollable area and stay pinned.
-	// Row layout (1-indexed, after clear screen):
-	//   row 1:         blank  (leading \n in the nexus Printf)
-	//   row 2:         nexus · model · threshold · pid
-	//   row 3 (+1 if resuming): "Continuing:" line
-	//   row 3 or 4:   separator
-	//   row 4 or 5:   blank  ← cursor is here after fmt.Println()
-	// So content starts on row 5 (fresh) or 6 (resume).
-	if tty {
-		headerLines := 4
-		if resumeSession != "" {
-			headerLines = 5
-		}
-		if rows > headerLines+2 {
-			// \033[{t};{b}r  — set scroll region to rows t..b
-			// \033[{r};1H    — move cursor to first row of scroll region
-			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
-		}
-		defer func() {
-			fmt.Print("\033[r")      // reset scroll region
-			fmt.Print("\033[?1049l") // exit alternate screen → restore original terminal
-			fmt.Print("\n")
-		}()
-	}
 
 	// ── Main loop ─────────────────────────────────────────────────────────────
 	// readline provides proper line editing: arrow keys, Ctrl+A/E/W/K, history.
