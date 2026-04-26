@@ -214,6 +214,12 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 
 	// ── Header ───────────────────────────────────────────────────────────────
 	if tty {
+		// Enter the alternate screen buffer — isolates nexus from the normal
+		// terminal scrollback. Without this, scrolling up reveals shell history
+		// (previous commands) instead of chat content, and the pinned header
+		// drifts because the terminal scrolls its own buffer, not the app's.
+		// On exit the original terminal is restored exactly as it was.
+		fmt.Print("\033[?1049h")   // enter alternate screen
 		fmt.Print("\033[2J\033[H") // clear screen
 	}
 
@@ -323,11 +329,9 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
 		}
 		defer func() {
-			// Reset scroll region. Do NOT jump to the last row — that leaves
-			// a screenful of blank lines between the session message and the
-			// shell prompt when the session was short. A plain \n is enough
-			// for the shell to place its prompt right after the last line.
-			fmt.Print("\033[r\n")
+			fmt.Print("\033[r")      // reset scroll region
+			fmt.Print("\033[?1049l") // exit alternate screen → restore original terminal
+			fmt.Print("\n")
 		}()
 	}
 
