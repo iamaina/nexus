@@ -225,32 +225,14 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		fmt.Print("\033[2J\033[H") // clear screen, cursor home
 	}
 
-	// redrawHeader prints a one-line context reminder after /source changes.
-	redrawHeader := func() {
-		if !tty || len(chatSources) == 0 {
-			return
-		}
-		fmt.Printf("  %s● source → %s%s\n\n", c.dim, strings.Join(chatSources, ", "), c.reset)
-	}
-
-	srcLabel := ""
-	if len(chatSources) > 0 {
-		srcLabel = "  ·  source: " + strings.Join(chatSources, ",")
-	}
-	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f%s", Version, sum.Model(), threshold, srcLabel)
-	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s\n",
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f", Version, sum.Model(), threshold)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f\n",
 		pad(len(headerVis), cols),
 		c.bold+c.cyan, Version, c.reset,
 		c.dim, c.reset,
 		c.bold, sum.Model(), c.reset,
 		c.dim, c.reset,
 		threshold,
-		func() string {
-			if len(chatSources) > 0 {
-				return c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
-			}
-			return ""
-		}(),
 	)
 
 	// ── Load existing session if resuming ────────────────────────────────────
@@ -308,6 +290,30 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		return fmt.Errorf("readline: %w", rlErr)
 	}
 	defer func() { _ = rl.Close() }()
+
+	// sourcePrompt builds the readline prompt to always show the active search scope.
+	// "[default] ❯" when no filter is set, "[wiki-cs] ❯" for a source filter,
+	// "[reference] ❯" for a category filter, "[wiki-cs · reference] ❯" for both.
+	// Called after any /source change so the prompt stays in sync without relying
+	// on a pinned header that requires a scroll region.
+	sourcePrompt := func() string {
+		var parts []string
+		if len(chatSources) > 0 {
+			parts = append(parts, strings.Join(chatSources, ","))
+		}
+		if chatCategory != "" {
+			parts = append(parts, chatCategory)
+		}
+		label := "default"
+		if len(parts) > 0 {
+			label = strings.Join(parts, " · ")
+		}
+		if !tty {
+			return "[" + label + "] ❯ "
+		}
+		return "\001" + c.dim + "\002[" + label + "]\001" + c.reset + "\002 \001" + c.bold + c.green + "\002❯\001" + c.reset + "\002 "
+	}
+	rl.SetPrompt(sourcePrompt())
 
 	// Close readline when context is cancelled so any blocking Readline()
 	// call in the goroutine below unblocks immediately.
@@ -383,8 +389,8 @@ loop:
 					}
 				case "clear", "off", "none":
 					chatSources = nil
+					rl.SetPrompt(sourcePrompt())
 					fmt.Printf("  %sSource filter cleared — searching all default sources%s\n\n", c.dim, c.reset)
-					redrawHeader()
 				default:
 					// Accept space- or comma-separated names: "/source a b" or "/source a,b"
 					parts := strings.FieldsFunc(arg, func(r rune) bool { return r == ',' || r == ' ' })
@@ -395,8 +401,30 @@ loop:
 						}
 					}
 					chatSources = sources
+					rl.SetPrompt(sourcePrompt())
 					fmt.Printf("  %sSource filter →%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
-					redrawHeader()
+				}
+				continue
+			}
+
+			// ── /category — restrict search to a config category ─────────────
+			if rest, ok := strings.CutPrefix(question, "/category"); ok {
+				arg := strings.TrimSpace(rest)
+				switch arg {
+				case "", "show":
+					if chatCategory == "" {
+						fmt.Printf("  %sActive category: (all)%s\n\n", c.dim, c.reset)
+					} else {
+						fmt.Printf("  %sActive category:%s %s\n\n", c.dim, c.reset, chatCategory)
+					}
+				case "clear", "off", "none":
+					chatCategory = ""
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sCategory filter cleared — searching all categories%s\n\n", c.dim, c.reset)
+				default:
+					chatCategory = arg
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sCategory filter →%s %s\n\n", c.dim, c.reset, chatCategory)
 				}
 				continue
 			}
@@ -710,11 +738,32 @@ func buildCompleter(cfg *config.Config) readline.AutoCompleter {
 		readline.PcItem("show"),
 	)
 
+	// Collect unique category names across all sources and URLs.
+	seen := map[string]bool{}
+	var catItems []readline.PrefixCompleterInterface
+	for _, s := range cfg.Sources {
+		if s.Category != "" && !seen[s.Category] {
+			seen[s.Category] = true
+			catItems = append(catItems, readline.PcItem(s.Category))
+		}
+	}
+	for _, u := range cfg.URLs {
+		if u.Category != "" && !seen[u.Category] {
+			seen[u.Category] = true
+			catItems = append(catItems, readline.PcItem(u.Category))
+		}
+	}
+	catItems = append(catItems,
+		readline.PcItem("clear"),
+		readline.PcItem("show"),
+	)
+
 	return readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
 		readline.PcItem("/status"),
 		readline.PcItem("/sources"),
 		readline.PcItem("/source", srcItems...),
+		readline.PcItem("/category", catItems...),
 		readline.PcItem("/gl",
 			readline.PcItem("todos"),
 			readline.PcItem("items"),
@@ -875,6 +924,8 @@ func printHelp(c cs) {
 		{"/sources", "list every configured source with type, category, and doc count"},
 		{"/source <name>", "restrict search to a source (comma-sep for multiple: a,b)"},
 		{"/source clear", "remove source filter — search all default sources"},
+		{"/category <name>", "restrict search to a category (e.g. reference, work)"},
+		{"/category clear", "remove category filter"},
 		{"/gl todos [host]", "fetch your GitLab todos and get prioritisation advice"},
 		{"/gl items <group|url>", "list open items in a group"},
 	}
