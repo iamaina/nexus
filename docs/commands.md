@@ -51,12 +51,16 @@ kill $(cat ~/.config/nexus/nexus.pid)
 
 | Command | Description |
 |---|---|
-| `/source <name>` | Restrict search to one or more sources (space- or comma-separated) |
-| `/source clear` | Remove source restriction |
+| `/help` | Print all slash commands with descriptions |
+| `/sources` | List every configured source with type, category, and indexed doc count |
+| `/source <name>` | Restrict search to one or more sources (comma-separated: `a,b`) |
+| `/source clear` | Remove source restriction — search all default sources |
 | `/source` or `/source show` | Show current active filter |
 | `/gl todos` | Fetch your pending GitLab todos and get a prioritised recommendation |
 | `/gl todos <host>` | Same but for a specific GitLab instance (e.g. `ops.gitlab.net`) |
 | `/gl items <group-path\|url>` | List open work items / issues in a GitLab group |
+
+**Tab completion** — press Tab after `/` to complete slash commands, or after `/source ` to complete source names from your config.
 
 GitLab URLs pasted anywhere in your question are **auto-fetched** — no slash command needed:
 ```

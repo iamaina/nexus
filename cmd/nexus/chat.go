@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -341,6 +342,7 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	rl, rlErr := readline.NewEx(&readline.Config{
 		Prompt:       rlPrompt,
 		HistoryLimit: 200,
+		AutoComplete: buildCompleter(a.Config),
 	})
 	if rlErr != nil {
 		return fmt.Errorf("readline: %w", rlErr)
@@ -393,6 +395,18 @@ loop:
 			}
 
 			// ── Slash commands ───────────────────────────────────────────────
+			if question == "/help" {
+				printHelp(c)
+				continue
+			}
+
+			// /sources — list all configured sources with indexed status.
+			// Must be checked before /source to avoid prefix collision.
+			if question == "/sources" {
+				printSources(ctx, a, c)
+				continue
+			}
+
 			if rest, ok := strings.CutPrefix(question, "/source"); ok {
 				arg := strings.TrimSpace(rest)
 				switch arg {
@@ -679,6 +693,143 @@ func init() {
 	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
 	RootCmd.Flags().StringSliceVar(&chatSources, "source", nil, "restrict search to one or more sources (repeatable: --source a --source b, or comma-separated: --source a,b)")
 	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work) (added v0.2.0)")
+}
+
+// ── Chat slash-command helpers ────────────────────────────────────────────────
+
+// buildCompleter returns a readline AutoCompleter that tab-completes slash
+// commands and source names. Source names are read from the config at session
+// start — dynamic enough for typical use without polling the DB on every tab.
+func buildCompleter(cfg *config.Config) readline.AutoCompleter {
+	var srcItems []readline.PrefixCompleterInterface
+	for _, s := range cfg.Sources {
+		srcItems = append(srcItems, readline.PcItem(s.Name))
+	}
+	for _, u := range cfg.URLs {
+		srcItems = append(srcItems, readline.PcItem(u.Name))
+	}
+	srcItems = append(srcItems,
+		readline.PcItem("clear"),
+		readline.PcItem("show"),
+	)
+
+	return readline.NewPrefixCompleter(
+		readline.PcItem("/help"),
+		readline.PcItem("/sources"),
+		readline.PcItem("/source", srcItems...),
+		readline.PcItem("/gl",
+			readline.PcItem("todos"),
+			readline.PcItem("items"),
+		),
+	)
+}
+
+// printHelp prints the in-chat slash command reference.
+func printHelp(c cs) {
+	cmds := [][2]string{
+		{"/help", "print this reference"},
+		{"/sources", "list all configured sources with indexed status"},
+		{"/source <name>", "restrict search to a source (comma-sep for multiple: a,b)"},
+		{"/source clear", "remove source filter — search all default sources"},
+		{"/gl todos [host]", "fetch your GitLab todos and get prioritisation advice"},
+		{"/gl items <group|url>", "list open items in a group"},
+	}
+
+	fmt.Printf("  %sSlash commands%s\n\n", c.bold, c.reset)
+	for _, cmd := range cmds {
+		fmt.Printf("  %s%-26s%s %s%s%s\n",
+			c.cyan, cmd[0], c.reset,
+			c.dim, cmd[1], c.reset)
+	}
+	fmt.Printf("\n  %sType 'exit' or 'quit' to end the session.%s\n\n", c.dim, c.reset)
+}
+
+// printSources lists all configured sources with their type, category, and
+// indexed document count. Sources with zero documents are flagged.
+func printSources(ctx context.Context, a *app.Application, c cs) {
+	// Count indexed documents per source name.
+	counts := make(map[string]int)
+	rows, err := a.DB.Query(ctx, `SELECT source_name, COUNT(*) FROM documents GROUP BY source_name`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var n int
+			if rows.Scan(&name, &n) == nil {
+				counts[name] = n
+			}
+		}
+	}
+
+	totalSources := len(a.Config.Sources) + len(a.Config.URLs)
+	indexed := 0
+	for _, s := range a.Config.Sources {
+		if counts[s.Name] > 0 {
+			indexed++
+		}
+	}
+	for _, u := range a.Config.URLs {
+		if counts[u.Name] > 0 {
+			indexed++
+		}
+	}
+
+	fmt.Printf("  %sSources%s  %s(%d configured · %d indexed)%s\n\n",
+		c.bold, c.reset, c.dim, totalSources, indexed, c.reset)
+
+	printSourceRow := func(name, kind, category string, docCount int) {
+		status := fmt.Sprintf("%s%s docs%s", c.dim, fmtCount(docCount), c.reset)
+		if docCount == 0 {
+			status = c.dim + "not indexed" + c.reset + "  — run: nexus ingest"
+		}
+		cat := category
+		if cat == "" {
+			cat = "—"
+		}
+		fmt.Printf("  %s%-24s%s  %s%-6s%s  %s%s\n",
+			c.cyan, name, c.reset,
+			c.dim, kind, c.reset,
+			c.dim+"cat:"+c.reset+" "+cat+"  ",
+			status)
+	}
+
+	if len(a.Config.Sources) > 0 {
+		fmt.Printf("  %sFILE SOURCES%s\n", c.dim, c.reset)
+		for _, s := range a.Config.Sources {
+			printSourceRow(s.Name, "file", s.Category, counts[s.Name])
+		}
+		fmt.Println()
+	}
+
+	if len(a.Config.URLs) > 0 {
+		fmt.Printf("  %sURL SOURCES%s\n", c.dim, c.reset)
+		for _, u := range a.Config.URLs {
+			printSourceRow(u.Name, "url", u.Category, counts[u.Name])
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("  %sUse /source <name> to filter your search.%s\n\n", c.dim, c.reset)
+}
+
+// fmtCount formats an integer with comma separators (e.g. 1234 → "1,234").
+func fmtCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	start := len(s) % 3
+	if start > 0 {
+		b.WriteString(s[:start])
+	}
+	for i := start; i < len(s); i += 3 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 // ── File helpers ──────────────────────────────────────────────────────────────

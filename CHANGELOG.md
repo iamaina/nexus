@@ -11,6 +11,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Chat — in-session discoverability (Phase 1)**
+- `/help` — prints all slash commands with descriptions directly in chat; no need to exit to look up a command
+- `/sources` — lists every configured source (file and URL) with its type, category, and live indexed document count; sources with zero docs are flagged with the ingest command to run; runs a single DB query per call
+- Tab completion — pressing Tab after `/` completes all slash commands; pressing Tab after `/source ` completes available source names from the active config; powered by readline's `PrefixCompleter`
+
 **Wikipedia — topic-focused ingestion replacing unbounded crawl**
 - Replaced the single `wikipedia` source (seed: main page, depth: unlimited) with four topic-specific sources: `wiki-cs`, `wiki-ai`, `wiki-sre`, `wiki-quantum`
 - Each source seeds from a curated Wikipedia Outline or topic article; depth 3 stays within the semantic cluster without following links to unrelated domains
