@@ -22,11 +22,12 @@ import (
 
 // Settle delays and scan intervals.
 const (
-	settleDelay     = 3 * time.Second  // personal files: wait for write to finish
-	repoSettleDelay = 10 * time.Second // new repo dir: wait for clone to complete
-	sourceScanTick  = 5 * time.Minute  // how often to re-scan watched sources
-	gdocSyncTick    = 30 * time.Minute // how often to re-sync registered Google Docs
-	defaultURLTick  = 24 * time.Hour   // default polling interval for URL sources
+	settleDelay       = 3 * time.Second  // personal files: wait for write to finish
+	repoSettleDelay   = 10 * time.Second // new repo dir: wait for clone to complete
+	sourceScanTick    = 5 * time.Minute  // how often to re-scan watched sources
+	gdocSyncTick      = 30 * time.Minute // how often to re-sync registered Google Docs
+	defaultURLTick    = 24 * time.Hour   // default polling interval for URL sources
+	workspaceSnapTick = 24 * time.Hour   // periodic workspace snapshot refresh
 )
 
 // watchedExtensions are the file types processed by the personal intake watcher.
@@ -57,7 +58,9 @@ var watchCmd = &cobra.Command{
   roots.workspace     — regenerate workspace structure snapshot on changes
   roots.repos[watch]  — detect newly cloned repositories
 
-Press Ctrl+C to stop watching.`,
+Press Ctrl+C to stop watching.
+
+Since: v0.0.1  (workspace OS layer added v0.1.0)`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		ctx := cmd.Context()
 
@@ -167,14 +170,42 @@ Press Ctrl+C to stop watching.`,
 				slog.Duration("interval", parseURLInterval(u.Interval)))
 		}
 
-		// 5. Initial workspace snapshot — run once at startup so the DB is current.
+		// 5. Workspace snapshot — generate once at startup, then refresh every 24 h.
+		// The periodic refresh catches structural changes (new subdirs, renamed dirs)
+		// that fsnotify misses because the workspace watch is non-recursive.
 		if workspaceRoot != "" {
 			go func() {
 				regenerateWorkspaceSnapshot(context.Background(), a, workspaceRoot)
+				ticker := time.NewTicker(workspaceSnapTick)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						regenerateWorkspaceSnapshot(context.Background(), a, workspaceRoot)
+					case <-ctx.Done():
+						return
+					}
+				}
 			}()
 		}
 
-		// 6. Google Docs sync ticker — only starts if credentials are configured.
+		// 6. Index health check — warn every 24 h if a rebuild is recommended.
+		// Runs on a ticker only (not at startup) because it is diagnostic, not
+		// urgent. No auto-rebuild — the user decides when to act.
+		go func() {
+			ticker := time.NewTicker(workspaceSnapTick)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					checkIndexHealth(context.Background(), a)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		// 7. Google Docs sync ticker — only starts if credentials are configured.
 		gdocCount := 0
 		if a.Config.Gdoc.CredentialsPath != "" {
 			docs, _ := a.Gdocs.List(ctx)
@@ -339,6 +370,11 @@ func checkNewRepo(ctx context.Context, a *app.Application, rootName, path string
 			slog.String("path", path),
 			slog.Any("err", err))
 	}
+
+	// Regenerate the workspace snapshot so dir_structure.md reflects the new repo.
+	if ws := a.Config.Roots.Workspace; ws != "" {
+		regenerateWorkspaceSnapshot(ctx, a, ws)
+	}
 }
 
 // startURLTicker polls a URL source immediately then re-polls at the configured
@@ -362,18 +398,26 @@ func startURLTicker(ctx context.Context, a *app.Application, u config.URLSource)
 // pollURLSource re-ingests a URL source. Unchanged pages are skipped by
 // hash-based dedup inside CrawlAndIngest.
 func pollURLSource(ctx context.Context, a *app.Application, u config.URLSource) {
-	count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.Name, u.Depth, parseDelay(u.Delay), false, false)
+	logger.Info(ctx, "url.poll_start",
+		slog.String("source", u.Name),
+		slog.String("url", u.URL))
+	fmt.Printf("  ⟳ Crawling %q (%s)…\n", u.Name, u.URL)
+
+	count, err := ingestion.CrawlAndIngest(ctx, a, u.URL, u.ScopeURL, u.Name, u.Depth, parseDelay(u.Delay), false, false, u.Exclude)
 	if err != nil {
 		logger.Warn(ctx, "url.poll_error",
 			slog.String("source", u.Name),
 			slog.Any("err", err))
+		fmt.Printf("  ✗ %q: crawl error — %v\n", u.Name, err)
 		return
 	}
 	if count > 0 {
 		logger.Info(ctx, "url.poll_done",
 			slog.String("source", u.Name),
 			slog.Int("ingested", count))
-		fmt.Printf("  ✓ URL source %q: %d page(s) updated\n", u.Name, count)
+		fmt.Printf("  ✓ %q: %d page(s) updated\n", u.Name, count)
+	} else {
+		fmt.Printf("  ✓ %q: up to date (no changes)\n", u.Name)
 	}
 }
 

@@ -78,7 +78,9 @@ var RootCmd = &cobra.Command{
     --threshold float   minimum similarity score to include a chunk (default 0.70)
 
   Runs entirely on your own infrastructure. No cloud. No API keys. No subscriptions.
-  Your data stays under your control — no third party ever sees what you ask or store.`,
+  Your data stays under your control — no third party ever sees what you ask or store.
+
+Since: v0.1.0  (--category added v0.2.0)`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if showVersion {
 			fmt.Printf("nexus %s\n", Version)

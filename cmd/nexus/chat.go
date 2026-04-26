@@ -1,16 +1,21 @@
 package nexus
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/chzyer/readline"
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/config"
+	"github.com/iamaina/nexus/internal/gitlab"
 	"github.com/iamaina/nexus/internal/live"
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/iamaina/nexus/internal/models"
@@ -33,6 +38,12 @@ const (
 // cs holds the active colour sequences.
 // All fields are empty strings when stdout is not a TTY (piped/redirected).
 type cs struct{ reset, bold, dim, green, cyan, gray string }
+
+// isTerminal returns true when stdout is an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
 
 func newCS() cs {
 	fi, err := os.Stdout.Stat()
@@ -92,24 +103,34 @@ func startSpinner(label string, tty bool) func() {
 	}
 }
 
-// ── indentWriter ─────────────────────────────────────────────────────────────
+// ── Markdown renderer ────────────────────────────────────────────────────────
 
-// indentWriter inserts a fixed prefix after every newline (and once at the
-// start) so streamed LLM responses stay visually aligned with source lines.
-type indentWriter struct {
-	w       io.Writer
-	prefix  string
-	started bool
-}
-
-func (iw *indentWriter) Write(p []byte) (int, error) {
-	if !iw.started {
-		iw.started = true
-		_, _ = io.WriteString(iw.w, iw.prefix)
+// renderMarkdown renders markdown text with glamour when tty is true.
+// Falls back to plain indented text on non-tty (piped) output.
+func renderMarkdown(text string, tty bool, cols int) string {
+	if !tty {
+		// Plain indented text for piped output
+		var sb strings.Builder
+		for line := range strings.SplitSeq(text, "\n") {
+			sb.WriteString("  ")
+			sb.WriteString(line)
+			sb.WriteByte('\n')
+		}
+		return sb.String()
 	}
-	s := strings.ReplaceAll(string(p), "\n", "\n"+iw.prefix)
-	_, err := iw.w.Write([]byte(s))
-	return len(p), err
+	width := max(cols-4, 40) // leave margin
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return "  " + strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n  ") + "\n"
+	}
+	rendered, err := r.Render(text)
+	if err != nil {
+		return "  " + strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n  ") + "\n"
+	}
+	return rendered
 }
 
 // ── Command vars ─────────────────────────────────────────────────────────────
@@ -117,9 +138,25 @@ func (iw *indentWriter) Write(p []byte) (int, error) {
 var (
 	chatModel    string
 	chatNoLive   bool
-	chatSource   string
+	chatSources  []string
 	chatCategory string
 )
+
+// gitLabHosts returns all GitLab hostnames from the repo roots config so the
+// gitlab fetcher recognises private instances (ops.gitlab.net, pre.gitlab.com…).
+func gitLabHosts(cfg *config.Config) []string {
+	seen := make(map[string]bool)
+	var hosts []string
+	for _, repo := range cfg.Roots.Repos {
+		for _, h := range repo.Hosts {
+			if !seen[h] {
+				seen[h] = true
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return hosts
+}
 
 // ── Shared completions helper ─────────────────────────────────────────────────
 
@@ -156,7 +193,6 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 
 	c := newCS()
 	tty := c.reset != ""
-	cols, rows := termSize()
 
 	threshold := queryThreshold
 	if threshold == 0 {
@@ -177,21 +213,27 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	var logFile *os.File
 
 	// ── Header ───────────────────────────────────────────────────────────────
+	// Clear screen on startup so shell history is not immediately visible when
+	// scrolling up — it is pushed above the startup boundary in the terminal's
+	// scrollback. No scroll region or alternate screen: the scroll region
+	// cannot intercept manual trackpad/mouse scroll (iTerm2 uses its own
+	// scrollback regardless), and alternate screen has iTerm2 setting conflicts.
+	// The header prints once and scrolls away naturally. Post-MVP improvement:
+	// replace with a bubbletea TUI that owns its own scroll buffer.
+	cols, _ := termSize()
+
 	if tty {
-		fmt.Print("\033[2J\033[H") // clear screen
+		fmt.Print("\033[2J\033[H") // clear screen, cursor home
 	}
 
-	pid := os.Getpid()
-	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f  ·  pid %d", Version, sum.Model(), threshold, pid)
-	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f  %s·%s  pid %d\n",
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f", Version, sum.Model(), threshold)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f\n",
 		pad(len(headerVis), cols),
 		c.bold+c.cyan, Version, c.reset,
 		c.dim, c.reset,
 		c.bold, sum.Model(), c.reset,
 		c.dim, c.reset,
 		threshold,
-		c.dim, c.reset,
-		pid,
 	)
 
 	// ── Load existing session if resuming ────────────────────────────────────
@@ -207,7 +249,7 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		sessionPath = p
 		history = loaded
 
-		// Open file for appending immediately so Ctrl+C doesn't lose turns
+		// Open file for appending immediately so Ctrl+C doesn't lose turns.
 		f, err := os.OpenFile(sessionPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec
 		if err != nil {
 			logger.Warn(ctx, "could not open session for append", "err", err)
@@ -220,37 +262,17 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		fmt.Printf("%s%sContinuing:%s %s  %s(%d exchange(s))%s\n",
 			pad(len(contVis), cols),
 			c.dim, c.reset, name, c.dim, len(history)/2, c.reset)
+
+		// Print the last 3 exchanges so the user has immediate context.
+		printResumeHistory(history, c, cols, tty)
 	}
+
+	// ── Startup status banner ────────────────────────────────────────────────
+	si := gatherStatus(ctx, a)
+	printStatusBanner(si, c, cols)
 
 	fmt.Println(c.sep(cols))
 	fmt.Println()
-
-	// ── Sticky header via terminal scroll region ──────────────────────────────
-	// After printing the header we fix a scroll region that begins on the next
-	// row, so the header rows are outside the scrollable area and stay pinned.
-	// Row layout (1-indexed, after clear screen):
-	//   row 1:         blank  (leading \n in the nexus Printf)
-	//   row 2:         nexus · model · threshold · pid
-	//   row 3 (+1 if resuming): "Continuing:" line
-	//   row 3 or 4:   separator
-	//   row 4 or 5:   blank  ← cursor is here after fmt.Println()
-	// So content starts on row 5 (fresh) or 6 (resume).
-	if tty {
-		headerLines := 4
-		if resumeSession != "" {
-			headerLines = 5
-		}
-		if rows > headerLines+2 {
-			// \033[{t};{b}r  — set scroll region to rows t..b
-			// \033[{r};1H    — move cursor to first row of scroll region
-			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
-		}
-		defer func() {
-			// Reset scroll region and park cursor at the last row so the
-			// returning shell prompt appears at the bottom, not mid-screen.
-			fmt.Printf("\033[r\033[%d;1H\n", rows)
-		}()
-	}
 
 	// ── Main loop ─────────────────────────────────────────────────────────────
 	// readline provides proper line editing: arrow keys, Ctrl+A/E/W/K, history.
@@ -263,11 +285,36 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	rl, rlErr := readline.NewEx(&readline.Config{
 		Prompt:       rlPrompt,
 		HistoryLimit: 200,
+		AutoComplete: buildCompleter(a.Config),
 	})
 	if rlErr != nil {
 		return fmt.Errorf("readline: %w", rlErr)
 	}
 	defer func() { _ = rl.Close() }()
+
+	// sourcePrompt builds the readline prompt to always show the active search scope.
+	// "[default] ❯" when no filter is set, "[wiki-cs] ❯" for a source filter,
+	// "[reference] ❯" for a category filter, "[wiki-cs · reference] ❯" for both.
+	// Called after any /source change so the prompt stays in sync without relying
+	// on a pinned header that requires a scroll region.
+	sourcePrompt := func() string {
+		var parts []string
+		if len(chatSources) > 0 {
+			parts = append(parts, strings.Join(chatSources, ","))
+		}
+		if chatCategory != "" {
+			parts = append(parts, chatCategory)
+		}
+		label := "default"
+		if len(parts) > 0 {
+			label = strings.Join(parts, " · ")
+		}
+		if !tty {
+			return "[" + label + "] ❯ "
+		}
+		return "\001" + c.dim + "\002[" + label + "]\001" + c.reset + "\002 \001" + c.bold + c.green + "\002❯\001" + c.reset + "\002 "
+	}
+	rl.SetPrompt(sourcePrompt())
 
 	// Close readline when context is cancelled so any blocking Readline()
 	// call in the goroutine below unblocks immediately.
@@ -314,6 +361,176 @@ loop:
 				break loop
 			}
 
+			// ── Slash commands ───────────────────────────────────────────────
+			if question == "/help" {
+				printHelp(c)
+				continue
+			}
+
+			if question == "/status" {
+				printStatusFull(gatherStatus(ctx, a), c, cols)
+				continue
+			}
+
+			// /sources — list all configured sources with indexed status.
+			// Must be checked before /source to avoid prefix collision.
+			if question == "/sources" {
+				printSources(ctx, a, c)
+				continue
+			}
+
+			if rest, ok := strings.CutPrefix(question, "/source"); ok {
+				arg := strings.TrimSpace(rest)
+				switch arg {
+				case "", "show":
+					if len(chatSources) == 0 {
+						fmt.Printf("  %sActive filter: (all default sources)%s\n\n", c.dim, c.reset)
+					} else {
+						fmt.Printf("  %sActive filter:%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
+					}
+				case "clear", "off", "none":
+					chatSources = nil
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sSource filter cleared — searching all default sources%s\n\n", c.dim, c.reset)
+				default:
+					// Accept space- or comma-separated names: "/source a b" or "/source a,b"
+					parts := strings.FieldsFunc(arg, func(r rune) bool { return r == ',' || r == ' ' })
+					var sources []string
+					for _, p := range parts {
+						if p = strings.TrimSpace(p); p != "" {
+							sources = append(sources, p)
+						}
+					}
+					chatSources = sources
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sSource filter →%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
+				}
+				continue
+			}
+
+			// ── /category — restrict search to a config category ─────────────
+			if rest, ok := strings.CutPrefix(question, "/category"); ok {
+				arg := strings.TrimSpace(rest)
+				switch arg {
+				case "", "show":
+					if chatCategory == "" {
+						fmt.Printf("  %sActive category: (all)%s\n\n", c.dim, c.reset)
+					} else {
+						fmt.Printf("  %sActive category:%s %s\n\n", c.dim, c.reset, chatCategory)
+					}
+				case "clear", "off", "none":
+					chatCategory = ""
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sCategory filter cleared — searching all categories%s\n\n", c.dim, c.reset)
+				default:
+					chatCategory = arg
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sCategory filter →%s %s\n\n", c.dim, c.reset, chatCategory)
+				}
+				continue
+			}
+
+			// ── /sessions — list recent chat sessions ────────────────────────
+			if question == "/sessions" {
+				printSessions(c, cols)
+				continue
+			}
+
+			// ── /resume <name> — load a past session mid-chat ─────────────────
+			if rest, ok := strings.CutPrefix(question, "/resume"); ok {
+				arg := strings.TrimSpace(rest)
+				if arg == "" {
+					fmt.Printf("  %sUsage: /resume <session-name>  (tab to complete)%s\n\n", c.dim, c.reset)
+					continue
+				}
+				p, err := resolveChatPath(arg)
+				if err != nil {
+					fmt.Printf("  %sSession not found: %s%s\n\n", c.dim, arg, c.reset)
+					continue
+				}
+				loaded, err := loadChatSession(p)
+				if err != nil {
+					fmt.Printf("  %sCould not load session: %v%s\n\n", c.dim, err, c.reset)
+					continue
+				}
+				// Close the current session file and open the new one for appending.
+				if logFile != nil {
+					_ = logFile.Close()
+					logFile = nil
+				}
+				f, openErr := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec
+				if openErr != nil {
+					logger.Warn(ctx, "could not open resumed session for append", "err", openErr)
+				} else {
+					logFile = f
+				}
+				sessionPath = p
+				history = loaded
+				name := strings.TrimSuffix(filepath.Base(p), ".md")
+				contVis := fmt.Sprintf("Switched to: %s  (%d exchange(s))", name, len(history)/2)
+				fmt.Printf("\n%s%sSwitched to:%s %s  %s(%d exchange(s))%s\n",
+					pad(len(contVis), cols),
+					c.dim, c.reset, name, c.dim, len(history)/2, c.reset)
+				printResumeHistory(history, c, cols, tty)
+				continue
+			}
+
+			// ── /gl command — on-demand GitLab context ───────────────────────
+			if rest, ok := strings.CutPrefix(question, "/gl"); ok {
+				arg := strings.TrimSpace(rest)
+
+				var glOut live.Output
+				var syntheticQ string
+
+				switch {
+				case arg == "" || arg == "todos":
+					glOut = gitlab.FetchTodos(ctx, "gitlab.com")
+					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case strings.HasPrefix(arg, "todos "):
+					host := strings.TrimSpace(strings.TrimPrefix(arg, "todos "))
+					glOut = gitlab.FetchTodos(ctx, host)
+					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case strings.HasPrefix(arg, "items "):
+					groupArg := strings.TrimSpace(strings.TrimPrefix(arg, "items "))
+					host, groupPath := gitlab.ParseGroupArg(groupArg)
+					glOut = gitlab.FetchGroupItems(ctx, host, groupPath)
+					syntheticQ = fmt.Sprintf("What is available to pick up in %s? Summarise the open items by priority and suggest where to start.", groupPath)
+				default:
+					fmt.Printf("  Unknown /gl command: %q\n  Available:\n    /gl todos [host]       — your pending todos\n    /gl items <group|url>  — open items in a group\n\n", arg)
+					continue
+				}
+
+				if glOut.Err != nil {
+					fmt.Printf("  %s✗ %s: %v%s\n\n", c.dim, glOut.Name, glOut.Err, c.reset)
+					continue
+				}
+
+				fmt.Printf("  %s⚡ %s%s\n\n", c.dim, glOut.Name, c.reset)
+				// Print the raw list first — URLs are always visible here regardless
+				// of what the LLM chooses to include in its summary.
+				fmt.Print(renderMarkdown(glOut.Text, tty, cols))
+
+				genStop := startSpinner("generating…", tty)
+				answer, genErr := sum.StreamChat(ctx, io.Discard, history, syntheticQ, nil, []live.Output{glOut})
+				genStop()
+				if genErr != nil {
+					if ctx.Err() != nil {
+						break loop
+					}
+					fmt.Printf("  generate error: %v\n\n", genErr)
+					continue
+				}
+				fmt.Print(renderMarkdown(answer, tty, cols))
+				fmt.Println(c.sep(cols))
+				fmt.Println()
+
+				history = append(history,
+					summarizer.ChatMessage{Role: "user", Content: syntheticQ},
+					summarizer.ChatMessage{Role: "assistant", Content: answer},
+				)
+				continue
+			}
+
 			fmt.Println()
 
 			// Embed + search
@@ -329,13 +546,23 @@ loop:
 				continue
 			}
 
-			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSource, chatCategory))
+			candidates, err := a.Chunks.Search(ctx, embeddings[0], 15, buildSearchFilter(a.Config, chatSources, chatCategory))
 			if err != nil {
 				stop()
 				if ctx.Err() != nil {
 					break loop
 				}
 				fmt.Printf("  search error: %v\n\n", err)
+				continue
+			}
+
+			// If --source was given but the vector search returned nothing, the
+			// source almost certainly has no indexed content. Warn and skip the
+			// LLM call — otherwise the model hallucinates from training data.
+			if len(candidates) == 0 && len(chatSources) > 0 {
+				stop()
+				fmt.Printf("  %s⚠  Source %q has no indexed content — run: nexus ingest%s\n\n",
+					c.dim, strings.Join(chatSources, ", "), c.reset)
 				continue
 			}
 
@@ -372,21 +599,22 @@ loop:
 				results = results[:12]
 			}
 
-			// Live context
+			stop() // clear spinner before live sources so their output doesn't bleed onto the spinner line
+
+			// Live context + GitLab URL auto-detection (run concurrently)
 			var liveOutputs []live.Output
+			glCh := make(chan []live.Output, 1)
+			go func() {
+				glCh <- gitlab.ExtractAndFetch(ctx, question, gitLabHosts(a.Config))
+			}()
+
 			if !chatNoLive {
 				liveSources, liveErr := a.ContextSources.List(ctx)
 				if liveErr == nil && len(liveSources) > 0 {
 					liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
-					for _, o := range liveOutputs {
-						if o.Err != nil {
-							logger.Warn(ctx, "live source failed", "name", o.Name, "err", o.Err)
-						}
-					}
 				}
 			}
-
-			stop() // clear spinner
+			liveOutputs = append(<-glCh, liveOutputs...)
 
 			// Source attribution
 			var srcParts []string
@@ -416,18 +644,19 @@ loop:
 					c.dim, threshold, c.reset)
 			}
 
-			// Stream response
-			w := &indentWriter{w: os.Stdout, prefix: "  "}
-			answer, err := sum.StreamChat(ctx, w, history, question, results, liveOutputs)
+			// Generate response — stream to discard, then glamour-render the full answer
+			genStop := startSpinner("generating…", tty)
+			answer, err := sum.StreamChat(ctx, io.Discard, history, question, results, liveOutputs)
+			genStop()
 			if err != nil {
-				fmt.Println()
 				if ctx.Err() != nil {
 					break loop
 				}
 				fmt.Printf("  generate error: %v\n\n", err)
 				continue
 			}
-			fmt.Print("\n\n")
+			fmt.Print(renderMarkdown(answer, tty, cols))
+			fmt.Println()
 
 			// "Open to read more:" — unique file paths from matched results
 			home, _ := os.UserHomeDir()
@@ -501,13 +730,477 @@ func init() {
 	// Chat flags live on RootCmd — bare `nexus` IS the chat interface.
 	RootCmd.Flags().StringVar(&chatModel, "model", "", "generation model (overrides config)")
 	RootCmd.Flags().BoolVar(&chatNoLive, "no-live", false, "skip live context sources")
-	RootCmd.Flags().StringVar(&chatSource, "source", "", "restrict search to a source or filename")
-	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work)")
+	RootCmd.Flags().StringSliceVar(&chatSources, "source", nil, "restrict search to one or more sources (repeatable: --source a --source b, or comma-separated: --source a,b)")
+	RootCmd.Flags().StringVar(&chatCategory, "category", "", "restrict search to sources in this category (e.g. reference, work) (added v0.2.0)")
+}
+
+// ── Chat slash-command helpers ────────────────────────────────────────────────
+
+// printResumeHistory reprints the last 3 exchanges from a resumed session so
+// the user has immediate context without scrolling through the whole history.
+func printResumeHistory(history []summarizer.ChatMessage, c cs, cols int, tty bool) {
+	// history is pairs: [user, assistant, user, assistant, ...]
+	pairs := len(history) / 2
+	start := pairs - 3
+	if start < 0 {
+		start = 0
+	}
+	if start >= pairs {
+		return
+	}
+	if start > 0 {
+		skipped := start
+		fmt.Printf("  %s… %d earlier exchange(s) — see session file%s\n", c.dim, skipped, c.reset)
+	}
+	fmt.Println()
+	for i := start; i < pairs; i++ {
+		q := history[i*2].Content
+		a := history[i*2+1].Content
+		// Truncate long questions to one line for the recap header.
+		displayQ := q
+		if len(displayQ) > 80 {
+			displayQ = displayQ[:77] + "…"
+		}
+		fmt.Printf("  %s❯ %s%s\n", c.dim, displayQ, c.reset)
+		fmt.Print(renderMarkdown(a, tty, cols))
+		fmt.Println(c.sep(cols))
+		fmt.Println()
+	}
+}
+
+// buildCompleter returns a readline AutoCompleter that tab-completes slash
+// commands and source names. Source names are read from the config at session
+// start — dynamic enough for typical use without polling the DB on every tab.
+func buildCompleter(cfg *config.Config) readline.AutoCompleter {
+	var srcItems []readline.PrefixCompleterInterface
+	for _, s := range cfg.Sources {
+		srcItems = append(srcItems, readline.PcItem(s.Name))
+	}
+	for _, u := range cfg.URLs {
+		srcItems = append(srcItems, readline.PcItem(u.Name))
+	}
+	srcItems = append(srcItems,
+		readline.PcItem("clear"),
+		readline.PcItem("show"),
+	)
+
+	// Collect unique category names across all sources and URLs.
+	seen := map[string]bool{}
+	var catItems []readline.PrefixCompleterInterface
+	for _, s := range cfg.Sources {
+		if s.Category != "" && !seen[s.Category] {
+			seen[s.Category] = true
+			catItems = append(catItems, readline.PcItem(s.Category))
+		}
+	}
+	for _, u := range cfg.URLs {
+		if u.Category != "" && !seen[u.Category] {
+			seen[u.Category] = true
+			catItems = append(catItems, readline.PcItem(u.Category))
+		}
+	}
+	catItems = append(catItems,
+		readline.PcItem("clear"),
+		readline.PcItem("show"),
+	)
+
+	// Build /resume completions from saved session names.
+	var resumeItems []readline.PrefixCompleterInterface
+	for _, name := range func() []string { names, _ := chatSessionNames(); return names }() {
+		resumeItems = append(resumeItems, readline.PcItem(name))
+	}
+
+	return readline.NewPrefixCompleter(
+		readline.PcItem("/help"),
+		readline.PcItem("/status"),
+		readline.PcItem("/sessions"),
+		readline.PcItem("/resume", resumeItems...),
+		readline.PcItem("/sources"),
+		readline.PcItem("/source", srcItems...),
+		readline.PcItem("/category", catItems...),
+		readline.PcItem("/gl",
+			readline.PcItem("todos"),
+			readline.PcItem("items"),
+		),
+	)
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+
+// statusInfo holds the gathered state of the knowledge base and models.
+type statusInfo struct {
+	totalSources    int
+	indexedSources  int
+	watchingSources int
+	defaultSources  []string // IsSearchDefault() == true
+	optInSources    []string // IsSearchDefault() == false
+	notIndexed      []string // sources with zero documents
+	genModel        string
+	embModel        string
+	ollamaURL       string
+}
+
+// gatherStatus queries the DB once and builds a statusInfo from the current
+// config. Called at session start and by /status.
+func gatherStatus(ctx context.Context, a *app.Application) statusInfo {
+	counts := make(map[string]int)
+	rows, err := a.DB.Query(ctx, `SELECT source_name, COUNT(*) FROM documents GROUP BY source_name`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var n int
+			if rows.Scan(&name, &n) == nil {
+				counts[name] = n
+			}
+		}
+	}
+
+	var si statusInfo
+	si.genModel = a.Summarizer.Model()
+	si.embModel = a.Config.Ollama.EmbeddingModel
+	if si.embModel == "" {
+		si.embModel = "mxbai-embed-large"
+	}
+	si.ollamaURL = a.OllamaURL
+
+	add := func(name string, isDefault, watch bool) {
+		si.totalSources++
+		if counts[name] > 0 {
+			si.indexedSources++
+		} else {
+			si.notIndexed = append(si.notIndexed, name)
+		}
+		if watch {
+			si.watchingSources++
+		}
+		if isDefault {
+			si.defaultSources = append(si.defaultSources, name)
+		} else {
+			si.optInSources = append(si.optInSources, name)
+		}
+	}
+
+	for _, s := range a.Config.Sources {
+		add(s.Name, s.IsSearchDefault(), s.Watch)
+	}
+	for _, u := range a.Config.URLs {
+		add(u.Name, u.IsSearchDefault(), u.Watch)
+	}
+	return si
+}
+
+// nameList formats up to maxShow names with "+N more" overflow.
+func nameList(names []string, maxShow int) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	if len(names) <= maxShow {
+		return strings.Join(names, ", ")
+	}
+	return strings.Join(names[:maxShow], ", ") + fmt.Sprintf(" (+%d more)", len(names)-maxShow)
+}
+
+// printStatusBanner prints a compact two-line status after the header on startup.
+func printStatusBanner(si statusInfo, c cs, cols int) {
+	// Line 1: counts + models
+	line1 := fmt.Sprintf("  %s%d/%d sources indexed%s  %s·%s  %s%d watching%s  %s·%s  %s%s · %s%s",
+		c.bold, si.indexedSources, si.totalSources, c.reset,
+		c.dim, c.reset,
+		c.dim, si.watchingSources, c.reset,
+		c.dim, c.reset,
+		c.dim, si.genModel, si.embModel, c.reset,
+	)
+	fmt.Println(line1)
+
+	// Line 2: default sources
+	if len(si.defaultSources) > 0 {
+		fmt.Printf("  %sDefault search:%s %s\n", c.dim, c.reset, nameList(si.defaultSources, 5))
+	}
+
+	// Line 3 (only if problems): not-indexed warning
+	if len(si.notIndexed) > 0 {
+		fmt.Printf("  %s⚠  Not indexed:%s %s%s  — run: nexus ingest%s\n",
+			c.dim, c.reset,
+			c.dim, nameList(si.notIndexed, 4), c.reset)
+	}
+	fmt.Println()
+}
+
+// printStatusFull prints the full status report for /status.
+func printStatusFull(si statusInfo, c cs, cols int) {
+	fmt.Printf("  %sStatus%s\n\n", c.bold, c.reset)
+
+	// Sources
+	fmt.Printf("  %s%-12s%s %d configured  %s·%s  %d indexed  %s·%s  %d watching\n",
+		c.bold, "Sources", c.reset,
+		si.totalSources,
+		c.dim, c.reset,
+		si.indexedSources,
+		c.dim, c.reset,
+		si.watchingSources,
+	)
+
+	// Default vs opt-in
+	if len(si.defaultSources) > 0 {
+		fmt.Printf("  %s%-12s%s %s\n", c.dim, "Default", c.reset, nameList(si.defaultSources, 6))
+	}
+	if len(si.optInSources) > 0 {
+		fmt.Printf("  %s%-12s%s %s\n", c.dim, "Opt-in", c.reset, nameList(si.optInSources, 6))
+	}
+	if len(si.notIndexed) > 0 {
+		fmt.Printf("  %s%-12s%s %s\n", c.dim+"⚠ "+"Not indexed", "", c.reset, nameList(si.notIndexed, 6))
+	}
+
+	fmt.Println()
+
+	// Models
+	fmt.Printf("  %s%-12s%s %s %s(generation)%s  %s·%s  %s %s(embedding)%s\n",
+		c.bold, "Models", c.reset,
+		si.genModel, c.dim, c.reset,
+		c.dim, c.reset,
+		si.embModel, c.dim, c.reset,
+	)
+	fmt.Printf("  %s%-12s%s %s\n", c.dim, "Ollama", c.reset, si.ollamaURL)
+	fmt.Println()
+
+	if len(si.notIndexed) > 0 {
+		fmt.Printf("  %sRun%s nexus ingest %sto index missing sources%s\n\n",
+			c.bold, c.reset, c.dim, c.reset)
+	}
+}
+
+// printHelp prints the in-chat slash command reference.
+func printHelp(c cs) {
+	cmds := [][2]string{
+		{"/help", "print this reference"},
+		{"/status", "show indexed source counts, default sources, and model health"},
+		{"/sources", "list every configured source with type, category, and doc count"},
+		{"/sessions", "list the 10 most recent chat sessions"},
+		{"/resume <name>", "switch to a past session mid-chat (tab to complete)"},
+		{"/source <name>", "restrict search to a source (comma-sep for multiple: a,b)"},
+		{"/source clear", "remove source filter — search all default sources"},
+		{"/category <name>", "restrict search to a category (e.g. reference, work)"},
+		{"/category clear", "remove category filter"},
+		{"/gl todos [host]", "fetch your GitLab todos and get prioritisation advice"},
+		{"/gl items <group|url>", "list open items in a group"},
+	}
+
+	fmt.Printf("  %sSlash commands%s\n\n", c.bold, c.reset)
+	for _, cmd := range cmds {
+		fmt.Printf("  %s%-26s%s %s%s%s\n",
+			c.cyan, cmd[0], c.reset,
+			c.dim, cmd[1], c.reset)
+	}
+	fmt.Printf("\n  %sType 'exit' or 'quit' to end the session.%s\n\n", c.dim, c.reset)
+}
+
+// printSources lists all configured sources with their type, category, and
+// indexed document count. Sources with zero documents are flagged.
+func printSources(ctx context.Context, a *app.Application, c cs) {
+	// Count indexed documents per source name.
+	counts := make(map[string]int)
+	rows, err := a.DB.Query(ctx, `SELECT source_name, COUNT(*) FROM documents GROUP BY source_name`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var n int
+			if rows.Scan(&name, &n) == nil {
+				counts[name] = n
+			}
+		}
+	}
+
+	totalSources := len(a.Config.Sources) + len(a.Config.URLs)
+	indexed := 0
+	for _, s := range a.Config.Sources {
+		if counts[s.Name] > 0 {
+			indexed++
+		}
+	}
+	for _, u := range a.Config.URLs {
+		if counts[u.Name] > 0 {
+			indexed++
+		}
+	}
+
+	fmt.Printf("  %sSources%s  %s(%d configured · %d indexed)%s\n\n",
+		c.bold, c.reset, c.dim, totalSources, indexed, c.reset)
+
+	// ● = searched by default  ○ = opt-in only (use /source <name> to include)
+	printSourceRow := func(name, kind, category string, isDefault bool, docCount int) {
+		marker := c.cyan + "●" + c.reset // default
+		scope := ""
+		if !isDefault {
+			marker = c.dim + "○" + c.reset // opt-in
+			scope = c.dim + "  opt-in" + c.reset
+		}
+		status := fmt.Sprintf("%s%s docs%s", c.dim, fmtCount(docCount), c.reset)
+		if docCount == 0 {
+			status = c.dim + "⚠ not indexed" + c.reset + "  — nexus ingest"
+		}
+		cat := category
+		if cat == "" {
+			cat = "—"
+		}
+		fmt.Printf("  %s  %s%-22s%s  %s%-6s%s  cat:%-16s  %s%s\n",
+			marker,
+			c.cyan, name, c.reset,
+			c.dim, kind, c.reset,
+			cat,
+			status,
+			scope)
+	}
+
+	if len(a.Config.Sources) > 0 {
+		fmt.Printf("  %sFILE SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
+		for _, s := range a.Config.Sources {
+			printSourceRow(s.Name, "file", s.Category, s.IsSearchDefault(), counts[s.Name])
+		}
+		fmt.Println()
+	}
+
+	if len(a.Config.URLs) > 0 {
+		fmt.Printf("  %sURL SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
+		for _, u := range a.Config.URLs {
+			printSourceRow(u.Name, "url", u.Category, u.IsSearchDefault(), counts[u.Name])
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("  %sUse /source <name> to filter your search to a specific source.%s\n\n", c.dim, c.reset)
+}
+
+// fmtCount formats an integer with comma separators (e.g. 1234 → "1,234").
+func fmtCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	start := len(s) % 3
+	if start > 0 {
+		b.WriteString(s[:start])
+	}
+	for i := start; i < len(s); i += 3 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 // ── File helpers ──────────────────────────────────────────────────────────────
 
 // openNewChatFile creates the session file and writes the header.
+// sessionEntry holds metadata for one saved chat session.
+type sessionEntry struct {
+	name      string    // filename without .md extension
+	modTime   time.Time // last modified — used for sort order
+	exchanges int       // number of user turns
+	slug      string    // human-readable part of the filename
+}
+
+// listSessions returns saved sessions sorted newest-first.
+// Each file is opened once to count exchanges; files that cannot be read are skipped.
+func listSessions() ([]sessionEntry, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(home, ".config", "nexus", "chats")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var sessions []sessionEntry
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		// Filename format: 2026-04-26_16-40_slug-here
+		// Split on _ to extract the slug (everything after date and time).
+		parts := strings.SplitN(name, "_", 3)
+		slug := name
+		if len(parts) == 3 {
+			slug = strings.ReplaceAll(parts[2], "-", " ")
+		}
+		sessions = append(sessions, sessionEntry{
+			name:      name,
+			modTime:   info.ModTime(),
+			exchanges: strings.Count(string(data), "**You:** "),
+			slug:      slug,
+		})
+	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].modTime.After(sessions[j].modTime)
+	})
+	return sessions, nil
+}
+
+// printSessions prints a table of recent sessions for /sessions.
+func printSessions(c cs, cols int) {
+	sessions, err := listSessions()
+	if err != nil {
+		fmt.Printf("  %sCould not read sessions: %v%s\n\n", c.dim, err, c.reset)
+		return
+	}
+	if len(sessions) == 0 {
+		fmt.Printf("  %sNo saved sessions yet.%s\n\n", c.dim, c.reset)
+		return
+	}
+
+	const maxShow = 10
+	showing := sessions
+	if len(showing) > maxShow {
+		showing = showing[:maxShow]
+	}
+
+	total := len(sessions)
+	if total > maxShow {
+		fmt.Printf("  %sRecent sessions (showing %d of %d)%s\n\n", c.bold, maxShow, total, c.reset)
+	} else {
+		fmt.Printf("  %sRecent sessions (%d)%s\n\n", c.bold, total, c.reset)
+	}
+
+	for _, s := range showing {
+		date := s.modTime.Format("2006-01-02  15:04")
+		exc := fmt.Sprintf("%d exchange(s)", s.exchanges)
+		// Truncate slug so the row fits within cols.
+		slug := s.slug
+		maxSlug := cols - 22 - len(exc) - 4
+		if maxSlug < 10 {
+			maxSlug = 10
+		}
+		if len(slug) > maxSlug {
+			slug = slug[:maxSlug-1] + "…"
+		}
+		fmt.Printf("  %s%s%s  %-*s  %s%s%s\n",
+			c.dim, date, c.reset,
+			maxSlug, slug,
+			c.dim, exc, c.reset,
+		)
+	}
+
+	fmt.Printf("\n  %s/resume <name>  to continue · tab to complete%s\n\n", c.dim, c.reset)
+}
+
 // Returns the open file (ready for appending) and its path.
 func openNewChatFile(start time.Time, model, firstQuestion string) (*os.File, string, error) {
 	home, err := os.UserHomeDir()

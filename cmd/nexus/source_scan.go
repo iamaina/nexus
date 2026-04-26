@@ -19,6 +19,11 @@ var sourceScanDryRun bool
 var sourceCmd = &cobra.Command{
 	Use:   "source",
 	Short: "Manage nexus document sources",
+	Long: `Manage nexus document sources.
+
+  nexus source scan   — discover repo directories and propose them as sources
+
+Since: v0.1.0`,
 }
 
 // sourceScanCmd reads dir_structure.md and proposes new sources to config.yaml.
@@ -32,7 +37,9 @@ by their parent directory, and proposes each group as a nexus source.
   nexus source scan --dry-run   — show discovered groups without modifying config.yaml
 
 Each proposed source covers all .md and .txt files in the group directory.
-Run 'nexus ingest' after applying to index the new sources.`,
+Run 'nexus ingest' after applying to index the new sources.
+
+Since: v0.1.0`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx := cmd.Context()
 		a, ok := ctx.Value(app.AppKey).(*app.Application)

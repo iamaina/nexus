@@ -22,7 +22,7 @@ nexus --resume 2026-04-20_14-32_praefect           # continue a saved session (t
 | `--resume string` | "" | Continue a saved session (tab-complete with session names) |
 | `--model string` | "" | Override generation model for this session |
 | `--no-live` | false | Skip live context sources (kubectl, terraform, etc.) |
-| `--source string` | "" | Restrict search to one source name or filename fragment |
+| `--source string` | "" | Restrict search to one or more sources (repeatable: `--source a --source b`, or comma-separated: `--source a,b`) |
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
 
@@ -45,6 +45,28 @@ The header line (`nexus vX.Y.Z · model · threshold · pid`) is pinned — it s
 answers scroll. The PID is shown for easy signal tracing:
 ```
 kill $(cat ~/.config/nexus/nexus.pid)
+```
+
+**In-session slash commands:**
+
+| Command | Description |
+|---|---|
+| `/help` | Print all slash commands with descriptions |
+| `/status` | Show indexed source counts, default vs opt-in sources, model health |
+| `/sources` | List every source with type, category, doc count, and `●` default / `○` opt-in marker |
+| `/source <name>` | Restrict search to one or more sources (comma-separated: `a,b`) |
+| `/source clear` | Remove source restriction — search all default sources |
+| `/source` or `/source show` | Show current active filter |
+| `/gl todos` | Fetch your pending GitLab todos and get a prioritised recommendation |
+| `/gl todos <host>` | Same but for a specific GitLab instance (e.g. `ops.gitlab.net`) |
+| `/gl items <group-path\|url>` | List open work items / issues in a GitLab group |
+
+**Tab completion** — press Tab after `/` to complete slash commands, or after `/source ` to complete source names from your config.
+
+GitLab URLs pasted anywhere in your question are **auto-fetched** — no slash command needed:
+```
+What is this issue about? https://gitlab.com/namespace/project/-/issues/123
+What changed in https://gitlab.com/namespace/project/-/merge_requests/456?
 ```
 
 ---
@@ -96,6 +118,7 @@ nexus ingest --force
 | Flag | Default | Description |
 |---|---|---|
 | `--force` | false | Re-ingest every file, ignoring the SHA-256 dedup check |
+| `--background` | false | Run ingest detached from the terminal; returns immediately and logs to `~/.config/nexus/logs/ingest.log` |
 
 **Deduplication:** nexus computes a SHA-256 hash of every file before processing. If the hash matches what's stored in the database, the file is skipped. `--force` bypasses this. If the same file content exists at a different path, nexus logs a warning and skips the duplicate.
 
@@ -120,10 +143,27 @@ nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --
 |---|---|---|
 | `--recursive` | false | Follow all links within the same URL path prefix |
 | `--depth int` | 0 | Max crawl depth (0 = unlimited; 1 = seed + directly linked pages) |
+| `--scope-url string` | same as seed | Link-filter prefix — links are accepted only if their URL starts with this; use when the seed is deeper than the tree you want to crawl (see below) |
 | `--delay duration` | none | Pause between requests, e.g. `200ms`, `1s` — polite crawling |
 | `--source string` | derived from host | Source name for query filtering (e.g. `--source chef-knife-docs`) |
 | `--dry-run` | false | Show every URL that would be ingested without touching the database |
 | `--force` | false | Re-ingest even when content hash is unchanged |
+| `--save` | false | Persist this source to `config.yaml` so `nexus ingest` and `nexus watch` pick it up automatically |
+| `--watch` | false | When used with `--save`, set `watch: true` so `nexus watch` polls this source on its interval |
+| `--background` | false | Run the crawl detached; returns immediately and logs to `~/.config/nexus/logs/ingest-url-<name>.log` |
+
+**`--scope-url` — seed vs prefix**
+
+By default the crawler only follows links whose URL starts with the seed URL's path. This is correct for most docs sites, but fails when the seed is a deep-linked page inside a broader tree you want to index:
+
+```bash
+# Bad — only pages starting with /wiki/Outline_of_computer_science are followed:
+nexus ingest-url https://en.wikipedia.org/wiki/Outline_of_computer_science --recursive
+
+# Good — seed at the outline, but follow any /wiki/ link:
+nexus ingest-url https://en.wikipedia.org/wiki/Outline_of_computer_science \
+  --scope-url https://en.wikipedia.org/wiki/ --recursive
+```
 
 **Config-based URL sources** — add to `config.yaml` and they run with `nexus ingest` and `nexus watch`:
 
@@ -136,6 +176,11 @@ urls:
     watch: true       # nexus watch re-checks on interval
     interval: 24h     # polling interval (default: 24h)
     delay: 300ms      # pause between requests
+  - name: wiki-cs
+    url: https://en.wikipedia.org/wiki/Outline_of_computer_science
+    scope_url: https://en.wikipedia.org/wiki/  # broader prefix than the seed
+    recursive: true
+    depth: 3
 ```
 
 **Querying ingested web sources:**
@@ -192,6 +237,26 @@ nexus organise --dry-run ~/Downloads                # show plan without moving a
 
   Apply? [Y/n]
 ```
+
+---
+
+## `nexus workspace`
+
+Commands for generating and inspecting the workspace structure map.
+
+### `nexus workspace scan`
+
+Walks `roots.workspace`, detects all git repos, and writes `dir_structure.md` at the workspace root. Also ingests the file as source `workspace-structure` so it is immediately queryable.
+
+This is the bootstrap command — run it once on first setup, or any time you want to force an immediate refresh without waiting for the next `nexus watch` cycle.
+
+**`nexus organise` requires this file to exist before it will proceed.**
+
+```bash
+nexus workspace scan
+```
+
+`nexus watch` keeps the map current automatically (regenerated on startup, every 24 h, and whenever a new repo is detected). `nexus workspace scan` is only needed for the initial run or manual refreshes.
 
 ---
 
@@ -257,7 +322,7 @@ nexus query "What was the Canva invoice for?"
 | Flag | Default | Description |
 |---|---|---|
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
-| `--source string` | "" | Restrict search to documents from one source name or filename fragment |
+| `--source string` | "" | Restrict search to one or more sources (repeatable or comma-separated) |
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--model string` | "" | Override the generation model for this query |
 | `--sources` | false | Print retrieved source chunks before the answer |
@@ -421,6 +486,61 @@ nexus layout --fonts mybook.pdf
 ## `nexus source`
 
 Manage document sources — directories whose files nexus indexes for search.
+
+### `nexus source status`
+
+Shows all configured sources (file and URL) with per-source ingestion statistics. Sources that have not yet been ingested appear in the table with `—` counts so you can see at a glance what still needs indexing.
+
+```bash
+nexus source status
+```
+
+**Example output:**
+
+```
+  Source             Type  Docs      Chunks    Last Ingest       Watch   Visibility
+  ─────────────────  ────  ───────   ─────────  ────────────────  ──────  ──────────
+  books              file       47       1,832  2026-04-20 12:10  —
+  intelligence       file       12         398  2026-04-19 08:45  —
+  ops-notes          file        —          —   never             5m
+  runbooks           file       89       2,104  2026-04-21 10:30  5m
+  wikipedia          url        22         541  2026-04-18 14:00  —       opt-in
+  kubernetes         url         —          —   never             —       opt-in
+
+  Total: 170 docs · 4,875 chunks  ·  2 source(s) not yet ingested — run: nexus ingest
+```
+
+**Columns:**
+
+| Column | Description |
+|---|---|
+| Source | Source name as configured in `config.yaml` |
+| Type | `file` (local directory) or `url` (web source) |
+| Docs | Number of ingested documents (`—` = not yet ingested) |
+| Chunks | Total chunks stored in the vector index |
+| Last Ingest | Timestamp of most recent ingest (format: `YYYY-MM-DD HH:MI`) |
+| Watch | Re-ingest interval if `watch: true` (e.g. `5m`, `24h`); `—` if not watched |
+| Visibility | `opt-in` if `search_by_default: false`; blank if included in default search |
+
+### `nexus source rm`
+
+Removes all ingested documents and chunks for a named source from the database. The source entry in `config.yaml` is not touched — only the indexed data is deleted.
+
+```bash
+nexus source rm Wikipedia
+```
+
+```
+  Source:  Wikipedia
+  Docs:    493
+  Chunks:  15,246
+
+  This will permanently delete all indexed content for "Wikipedia".
+  Continue? [y/N] y
+  ✓ Removed 493 doc(s) and their chunks for source "Wikipedia".
+```
+
+---
 
 ### `nexus source scan`
 
@@ -637,6 +757,81 @@ Remove a registered doc. The ingested content stays in the search index until th
 ```bash
 nexus gdoc rm manager-1on1
 ```
+
+---
+
+## `nexus index`
+
+Monitor and rebuild the IVFFlat vector index on the `chunks` table.
+
+The index partitions 1024-dimensional chunk vectors into buckets at build time. Queries probe the nearest buckets instead of scanning all rows — roughly 400× faster at 4M+ chunks with the default `probes=10` setting. The index degrades as data grows because the original bucket centroids no longer reflect the current distribution. These commands tell you when to act and do the rebuild safely.
+
+### `nexus index status`
+
+Show index health and the exact command to run if a rebuild is needed. Read-only.
+
+```bash
+nexus index status
+```
+
+**Example output — healthy:**
+```
+  Index:  chunks_embedding_idx  (IVFFlat, lists=4000)
+  Built:  2026-04-26 with 4,195,592 chunks
+  Now:    4,195,592 chunks  (+0%)
+
+  ✅  Index is healthy. No action needed.
+      Rebuild recommended when chunks reach ~6,293,388.
+```
+
+**Example output — reindex recommended:**
+```
+  Index:  chunks_embedding_idx  (IVFFlat, lists=4000)
+  Built:  2026-04-26 with 4,195,592 chunks
+  Now:    6,800,000 chunks  (+62%)
+
+  ⚠️   Chunk count has grown 62% since the index was built.
+      Bucket centroids are becoming stale. REINDEX recommended.
+
+  Run:  nexus index rebuild
+```
+
+**Example output — resize recommended:**
+```
+  ⚠️   lists=4000 is significantly below optimal (9000).
+      Bucket centroids no longer reflect the current data distribution.
+
+  Run:  nexus index rebuild --resize   ← drop + recreate with lists=9000
+```
+
+### `nexus index rebuild`
+
+Rebuild the index to restore full search performance.
+
+```bash
+nexus index rebuild           # REINDEX CONCURRENTLY — same lists, queries stay live
+nexus index rebuild --resize  # drop + recreate with optimal lists value
+```
+
+**Decision guide:**
+
+| Condition | Recommendation |
+|---|---|
+| Growth < 50% from build count | Nothing — `nexus index status` shows ✅ |
+| Growth 50–100%, lists within 30% of optimal | `nexus index rebuild` |
+| Growth > 100% or lists > 30% below optimal | `nexus index rebuild --resize` |
+
+**`maintenance_work_mem` is handled automatically:**
+
+Both modes check the current setting. If it is below 2 GB, `ALTER SYSTEM SET maintenance_work_mem = '2GB'` is run once to fix it permanently, then 5 GB is set for the current session. No manual `PGOPTIONS` workaround needed.
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--resize` | Drop and recreate with `lists = current_count / 1000` instead of REINDEX |
+
+**Background:** `nexus watch` runs an index health check every 24 h and logs a `[WARN]` message if a rebuild is recommended. No automatic rebuild — the command is always user-driven.
 
 ---
 

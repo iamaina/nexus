@@ -185,7 +185,7 @@ setup:
 	psql -U $$USER -h localhost -d opsnexus -c "GRANT ALL ON SCHEMA public TO vaultuser;"
 
 	@echo ""
-	@echo "5. Exporting PG_PASSWORD for the Go app..."
+	@echo "5. Exporting PG_PASSWORD and NEXUS_DSN for the Go app..."
 	@PASSWORD=$$(cat .pgpassword); \
 	if ! grep -q "PG_PASSWORD" ~/.zshrc 2>/dev/null; then \
 		echo "export PG_PASSWORD=$$PASSWORD" >> ~/.zshrc; \
@@ -193,6 +193,10 @@ setup:
 	else \
 		sed -i '' "s|^export PG_PASSWORD=.*|export PG_PASSWORD=$$PASSWORD|" ~/.zshrc; \
 		echo "   Updated PG_PASSWORD in ~/.zshrc"; \
+	fi; \
+	if ! grep -q "NEXUS_DSN" ~/.zshrc 2>/dev/null; then \
+		echo 'export NEXUS_DSN="postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> ~/.zshrc; \
+		echo "   Added NEXUS_DSN to ~/.zshrc"; \
 	fi; \
 	export PG_PASSWORD=$$PASSWORD; \
 	rm -f .pgpassword
@@ -305,6 +309,39 @@ setup:
 			echo "      - .md" >> config.yaml; \
 			echo "      - .txt" >> config.yaml; \
 		fi; \
+		echo ""; \
+		echo "--- Web / URL sources (optional) ---"; \
+		echo "Add docs sites, wikis, or any web pages nexus should index."; \
+		echo "Each URL source can be excluded from default search (useful for large references like Wikipedia)."; \
+		echo "Press Enter on the URL prompt to finish."; \
+		url_section_written=0; \
+		while true; do \
+			echo ""; \
+			read -p "  URL to ingest (leave blank to finish): " url_val; \
+			[ -z "$$url_val" ] && break; \
+			read -p "  Name for this source: " url_name; \
+			[ -z "$$url_name" ] && echo "  Name is required — skipping." && continue; \
+			read -p "  Category (e.g. reference, work — leave blank to skip): " url_category; \
+			read -p "  Include in default search? [Y/n]: " url_default; \
+			read -p "  Recursive crawl (follow links within same path)? [y/N]: " url_recursive; \
+			if [ "$$url_section_written" = "0" ]; then \
+				echo "" >> config.yaml; \
+				echo "urls:" >> config.yaml; \
+				url_section_written=1; \
+			fi; \
+			echo "  - name: $$url_name" >> config.yaml; \
+			echo "    url: $$url_val" >> config.yaml; \
+			if [ -n "$$url_category" ]; then \
+				echo "    category: $$url_category" >> config.yaml; \
+			fi; \
+			case "$$url_default" in \
+				n|N) echo "    search_by_default: false" >> config.yaml ;; \
+			esac; \
+			case "$$url_recursive" in \
+				y|Y) echo "    recursive: true" >> config.yaml ;; \
+			esac; \
+			echo "    watch: false" >> config.yaml; \
+		done; \
 		echo "" >> config.yaml; \
 		echo "postgres:" >> config.yaml; \
 		echo '  dsn: "postgres://vaultuser:$${PG_PASSWORD}@localhost:5432/opsnexus?sslmode=disable"' >> config.yaml; \

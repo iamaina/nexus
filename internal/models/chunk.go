@@ -32,7 +32,11 @@ func (m *ChunkModel) Store(ctx context.Context, docID int64, chunks []EnrichedCh
 	for i, chunk := range chunks {
 		batch.Queue(
 			`INSERT INTO chunks (document_id, chunk_index, chunk_text, chapter, section_level)
-			 VALUES ($1, $2, $3, $4, $5)`,
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+			     chunk_text    = EXCLUDED.chunk_text,
+			     chapter       = EXCLUDED.chapter,
+			     section_level = EXCLUDED.section_level`,
 			docID, i, chunk.Text, chunk.Chapter, chunk.Level,
 		)
 	}
@@ -90,14 +94,19 @@ func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, 
 
 	where := "WHERE c.embedding IS NOT NULL"
 
-	// Source substring filter — user explicitly targeted one source.
-	// When set, ExcludeNames is bypassed (the user wants this source regardless).
-	if f.Source != "" {
-		n++
-		where += fmt.Sprintf(
-			" AND (d.source_name ILIKE '%%' || $%d || '%%' OR d.file_path ILIKE '%%' || $%d || '%%')",
-			n, n)
-		args = append(args, f.Source)
+	// Source substring filter — user explicitly targeted one or more sources.
+	// When set, ExcludeNames is bypassed (the user wants these sources regardless).
+	// Multiple sources are ORed: results matching any of them are included.
+	if len(f.Sources) > 0 {
+		parts := make([]string, len(f.Sources))
+		for i, src := range f.Sources {
+			n++
+			parts[i] = fmt.Sprintf(
+				"(d.source_name ILIKE '%%' || $%d || '%%' OR d.file_path ILIKE '%%' || $%d || '%%')",
+				n, n)
+			args = append(args, src)
+		}
+		where += " AND (" + strings.Join(parts, " OR ") + ")"
 	}
 
 	// Category filter: only include sources whose name is in this list.
@@ -113,7 +122,7 @@ func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, 
 
 	// Default exclusion: skip sources not included in default search.
 	// Only applied when the user has not specified an explicit source.
-	if f.Source == "" && len(f.ExcludeNames) > 0 {
+	if len(f.Sources) == 0 && len(f.ExcludeNames) > 0 {
 		ph := make([]string, len(f.ExcludeNames))
 		for i, name := range f.ExcludeNames {
 			n++
@@ -121,6 +130,14 @@ func (m *ChunkModel) Search(ctx context.Context, queryVec []float32, limit int, 
 			args = append(args, name)
 		}
 		where += fmt.Sprintf(" AND d.source_name NOT IN (%s)", strings.Join(ph, ","))
+	}
+
+	// Increase IVFFlat probes so the index trades a little extra work for
+	// better recall across large datasets (e.g. Wikipedia). Default is 1
+	// (fast but misses distant buckets); 10 gives good accuracy without
+	// meaningfully slowing down queries at this scale.
+	if _, err := m.DB.Exec(ctx, "SET ivfflat.probes = 10"); err != nil {
+		return nil, fmt.Errorf("set ivfflat.probes: %w", err)
 	}
 
 	q := fmt.Sprintf(`

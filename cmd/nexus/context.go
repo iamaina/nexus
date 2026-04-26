@@ -24,7 +24,9 @@ Examples:
   nexus context add tf     "terraform show -json | jq '.values.root_module'"
   nexus context list
   nexus context run kubectl
-  nexus context rm kubectl`,
+  nexus context rm kubectl
+
+Since: v0.0.1`,
 }
 
 var contextAddCmd = &cobra.Command{

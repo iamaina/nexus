@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/iamaina/nexus/internal/app"
+	"github.com/iamaina/nexus/internal/config"
 	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,18 @@ Examples:
   nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --source chef-knife-docs
 
   # Limit crawl to 2 levels deep
-  nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --depth 2`,
+  nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --depth 2
+
+  # Save to config.yaml so nexus ingest and nexus watch pick it up automatically
+  nexus ingest-url https://sre.google/sre-book/ --recursive --source SRE-handbook --save
+
+  # Save and enable watch polling
+  nexus ingest-url https://sre.google/sre-book/ --recursive --source SRE-handbook --save --watch
+
+  # Run in the background — returns immediately, logs to ~/.config/nexus/logs/
+  nexus ingest-url https://sre.google/sre-book/ --recursive --source SRE-handbook --delay 300ms --save --background
+
+Since: v0.2.0 (--save, --watch, --background added v0.3.0)`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rawURL := args[0]
@@ -53,14 +65,66 @@ Examples:
 		depth, _ := cmd.Flags().GetInt("depth")
 		source, _ := cmd.Flags().GetString("source")
 		delayStr, _ := cmd.Flags().GetString("delay")
+		scopeURL, _ := cmd.Flags().GetString("scope-url")
+		save, _ := cmd.Flags().GetBool("save")
+		watch, _ := cmd.Flags().GetBool("watch")
+		background, _ := cmd.Flags().GetBool("background")
 		delay := parseDelay(delayStr)
 
 		if source == "" {
 			source = defaultSourceName(rawURL)
 		}
 
+		if watch && !save {
+			fmt.Println("  Note: --watch has no effect without --save")
+		}
+
 		ctx := cmd.Context()
 		a := ctx.Value(app.AppKey).(*app.Application)
+
+		// --save: upsert this source into config.yaml before doing anything else.
+		// config.Save() rewrites the entire file — YAML comments are not preserved.
+		if save {
+			newSrc := config.URLSource{
+				Name:      source,
+				URL:       rawURL,
+				ScopeURL:  scopeURL,
+				Recursive: recursive,
+				Depth:     depth,
+				Watch:     watch,
+				Delay:     delayStr,
+			}
+			upserted := false
+			for i, existing := range a.Config.URLs {
+				if existing.Name == newSrc.Name {
+					a.Config.URLs[i] = newSrc
+					upserted = true
+					break
+				}
+			}
+			if !upserted {
+				a.Config.URLs = append(a.Config.URLs, newSrc)
+			}
+			if err := a.Config.Save(); err != nil {
+				return fmt.Errorf("save config: %w", err)
+			}
+			action := "Added"
+			if upserted {
+				action = "Updated"
+			}
+			fmt.Printf("  ✓ %s %q in config.yaml", action, source)
+			if watch {
+				fmt.Printf(" (watch: true — nexus watch will poll this source)")
+			}
+			fmt.Println()
+		}
+
+		// --background: re-exec without --background, detached from terminal.
+		// --save has already written config.yaml above, so the child process
+		// runs the crawl only — no config writes happen in the child.
+		if background {
+			return startBackground(fmt.Sprintf("Crawling %q", source), "ingest-url-"+source)
+		}
 
 		if dryRun {
 			fmt.Printf("Dry run — source: %q\n\n", source)
@@ -91,7 +155,7 @@ Examples:
 		fmt.Println(")")
 		fmt.Println()
 
-		count, err := ingestion.CrawlAndIngest(ctx, a, rawURL, source, depth, delay, force, dryRun)
+		count, err := ingestion.CrawlAndIngest(ctx, a, rawURL, scopeURL, source, depth, delay, force, dryRun, nil)
 		if err != nil {
 			return err
 		}
@@ -112,7 +176,11 @@ func init() {
 	ingestURLCmd.Flags().Bool("force", false, "Re-ingest pages even if content hash is unchanged")
 	ingestURLCmd.Flags().Int("depth", 0, "Maximum crawl depth when --recursive is set (0 = unlimited)")
 	ingestURLCmd.Flags().String("source", "", "Source name for ingested pages (default: derived from URL host)")
+	ingestURLCmd.Flags().String("scope-url", "", "Link-filter prefix (defaults to the seed URL prefix); use to start at a deep page but crawl a broader tree")
 	ingestURLCmd.Flags().String("delay", "", "Pause between requests, e.g. 200ms, 1s (default: none)")
+	ingestURLCmd.Flags().Bool("save", false, "Persist this source to config.yaml so nexus ingest and nexus watch pick it up automatically")
+	ingestURLCmd.Flags().Bool("watch", false, "When used with --save, set watch: true so nexus watch polls this source on its interval")
+	ingestURLCmd.Flags().Bool("background", false, "Run the crawl in the background; returns immediately and logs to ~/.config/nexus/logs/")
 	RootCmd.AddCommand(ingestURLCmd)
 }
 

@@ -68,15 +68,17 @@ type GdocConfig struct {
 // URLSource represents a web URL (or a docs site to crawl) that nexus ingests
 // and optionally re-checks on a schedule.
 type URLSource struct {
-	Name            string `yaml:"name"`              // source label used in nexus query results
-	URL             string `yaml:"url"`               // seed URL to fetch
-	Recursive       bool   `yaml:"recursive"`         // if true, follow links within the same path prefix
-	Depth           int    `yaml:"depth"`             // max crawl depth (0 = unlimited)
-	Watch           bool   `yaml:"watch"`             // if true, nexus watch re-checks on Interval
-	Interval        string `yaml:"interval"`          // polling interval, e.g. "24h", "6h" (default: "24h")
-	Delay           string `yaml:"delay"`             // pause between requests, e.g. "200ms", "1s" (default: none)
-	SearchByDefault *bool  `yaml:"search_by_default"` // nil/true = included by default; false = opt-in only
-	Category        string `yaml:"category"`          // logical group, e.g. "reference"
+	Name            string   `yaml:"name"`              // source label used in nexus query results
+	URL             string   `yaml:"url"`               // seed URL to fetch
+	ScopeURL        string   `yaml:"scope_url"`         // link-filter prefix; defaults to seed URL prefix when empty
+	Recursive       bool     `yaml:"recursive"`         // if true, follow links within the same path prefix
+	Depth           int      `yaml:"depth"`             // max crawl depth (0 = unlimited)
+	Exclude         []string `yaml:"exclude"`           // URL path substrings to skip during crawl
+	Watch           bool     `yaml:"watch"`             // if true, nexus watch re-checks on Interval
+	Interval        string   `yaml:"interval"`          // polling interval, e.g. "24h", "6h" (default: "24h")
+	Delay           string   `yaml:"delay"`             // pause between requests, e.g. "200ms", "1s" (default: none)
+	SearchByDefault *bool    `yaml:"search_by_default"` // nil/true = included by default; false = opt-in only
+	Category        string   `yaml:"category"`          // logical group, e.g. "reference"
 }
 
 // IsSearchDefault reports whether this URL source is included in queries by default.
