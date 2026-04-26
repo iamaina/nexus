@@ -225,32 +225,14 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		fmt.Print("\033[2J\033[H") // clear screen, cursor home
 	}
 
-	// redrawHeader prints a one-line context reminder after /source changes.
-	redrawHeader := func() {
-		if !tty || len(chatSources) == 0 {
-			return
-		}
-		fmt.Printf("  %s● source → %s%s\n\n", c.dim, strings.Join(chatSources, ", "), c.reset)
-	}
-
-	srcLabel := ""
-	if len(chatSources) > 0 {
-		srcLabel = "  ·  source: " + strings.Join(chatSources, ",")
-	}
-	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f%s", Version, sum.Model(), threshold, srcLabel)
-	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s\n",
+	headerVis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f", Version, sum.Model(), threshold)
+	fmt.Printf("\n%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f\n",
 		pad(len(headerVis), cols),
 		c.bold+c.cyan, Version, c.reset,
 		c.dim, c.reset,
 		c.bold, sum.Model(), c.reset,
 		c.dim, c.reset,
 		threshold,
-		func() string {
-			if len(chatSources) > 0 {
-				return c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
-			}
-			return ""
-		}(),
 	)
 
 	// ── Load existing session if resuming ────────────────────────────────────
@@ -284,6 +266,10 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		printResumeHistory(history, c, cols, tty)
 	}
 
+	// ── Startup status banner ────────────────────────────────────────────────
+	si := gatherStatus(ctx, a)
+	printStatusBanner(si, c, cols)
+
 	fmt.Println(c.sep(cols))
 	fmt.Println()
 
@@ -304,6 +290,30 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		return fmt.Errorf("readline: %w", rlErr)
 	}
 	defer func() { _ = rl.Close() }()
+
+	// sourcePrompt builds the readline prompt to always show the active search scope.
+	// "[default] ❯" when no filter is set, "[wiki-cs] ❯" for a source filter,
+	// "[reference] ❯" for a category filter, "[wiki-cs · reference] ❯" for both.
+	// Called after any /source change so the prompt stays in sync without relying
+	// on a pinned header that requires a scroll region.
+	sourcePrompt := func() string {
+		var parts []string
+		if len(chatSources) > 0 {
+			parts = append(parts, strings.Join(chatSources, ","))
+		}
+		if chatCategory != "" {
+			parts = append(parts, chatCategory)
+		}
+		label := "default"
+		if len(parts) > 0 {
+			label = strings.Join(parts, " · ")
+		}
+		if !tty {
+			return "[" + label + "] ❯ "
+		}
+		return "\001" + c.dim + "\002[" + label + "]\001" + c.reset + "\002 \001" + c.bold + c.green + "\002❯\001" + c.reset + "\002 "
+	}
+	rl.SetPrompt(sourcePrompt())
 
 	// Close readline when context is cancelled so any blocking Readline()
 	// call in the goroutine below unblocks immediately.
@@ -356,6 +366,11 @@ loop:
 				continue
 			}
 
+			if question == "/status" {
+				printStatusFull(gatherStatus(ctx, a), c, cols)
+				continue
+			}
+
 			// /sources — list all configured sources with indexed status.
 			// Must be checked before /source to avoid prefix collision.
 			if question == "/sources" {
@@ -374,8 +389,8 @@ loop:
 					}
 				case "clear", "off", "none":
 					chatSources = nil
+					rl.SetPrompt(sourcePrompt())
 					fmt.Printf("  %sSource filter cleared — searching all default sources%s\n\n", c.dim, c.reset)
-					redrawHeader()
 				default:
 					// Accept space- or comma-separated names: "/source a b" or "/source a,b"
 					parts := strings.FieldsFunc(arg, func(r rune) bool { return r == ',' || r == ' ' })
@@ -386,8 +401,30 @@ loop:
 						}
 					}
 					chatSources = sources
+					rl.SetPrompt(sourcePrompt())
 					fmt.Printf("  %sSource filter →%s %s\n\n", c.dim, c.reset, strings.Join(chatSources, ", "))
-					redrawHeader()
+				}
+				continue
+			}
+
+			// ── /category — restrict search to a config category ─────────────
+			if rest, ok := strings.CutPrefix(question, "/category"); ok {
+				arg := strings.TrimSpace(rest)
+				switch arg {
+				case "", "show":
+					if chatCategory == "" {
+						fmt.Printf("  %sActive category: (all)%s\n\n", c.dim, c.reset)
+					} else {
+						fmt.Printf("  %sActive category:%s %s\n\n", c.dim, c.reset, chatCategory)
+					}
+				case "clear", "off", "none":
+					chatCategory = ""
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sCategory filter cleared — searching all categories%s\n\n", c.dim, c.reset)
+				default:
+					chatCategory = arg
+					rl.SetPrompt(sourcePrompt())
+					fmt.Printf("  %sCategory filter →%s %s\n\n", c.dim, c.reset, chatCategory)
 				}
 				continue
 			}
@@ -701,10 +738,32 @@ func buildCompleter(cfg *config.Config) readline.AutoCompleter {
 		readline.PcItem("show"),
 	)
 
+	// Collect unique category names across all sources and URLs.
+	seen := map[string]bool{}
+	var catItems []readline.PrefixCompleterInterface
+	for _, s := range cfg.Sources {
+		if s.Category != "" && !seen[s.Category] {
+			seen[s.Category] = true
+			catItems = append(catItems, readline.PcItem(s.Category))
+		}
+	}
+	for _, u := range cfg.URLs {
+		if u.Category != "" && !seen[u.Category] {
+			seen[u.Category] = true
+			catItems = append(catItems, readline.PcItem(u.Category))
+		}
+	}
+	catItems = append(catItems,
+		readline.PcItem("clear"),
+		readline.PcItem("show"),
+	)
+
 	return readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
+		readline.PcItem("/status"),
 		readline.PcItem("/sources"),
 		readline.PcItem("/source", srcItems...),
+		readline.PcItem("/category", catItems...),
 		readline.PcItem("/gl",
 			readline.PcItem("todos"),
 			readline.PcItem("items"),
@@ -712,13 +771,161 @@ func buildCompleter(cfg *config.Config) readline.AutoCompleter {
 	)
 }
 
+// ── Status ────────────────────────────────────────────────────────────────────
+
+// statusInfo holds the gathered state of the knowledge base and models.
+type statusInfo struct {
+	totalSources    int
+	indexedSources  int
+	watchingSources int
+	defaultSources  []string // IsSearchDefault() == true
+	optInSources    []string // IsSearchDefault() == false
+	notIndexed      []string // sources with zero documents
+	genModel        string
+	embModel        string
+	ollamaURL       string
+}
+
+// gatherStatus queries the DB once and builds a statusInfo from the current
+// config. Called at session start and by /status.
+func gatherStatus(ctx context.Context, a *app.Application) statusInfo {
+	counts := make(map[string]int)
+	rows, err := a.DB.Query(ctx, `SELECT source_name, COUNT(*) FROM documents GROUP BY source_name`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var n int
+			if rows.Scan(&name, &n) == nil {
+				counts[name] = n
+			}
+		}
+	}
+
+	var si statusInfo
+	si.genModel = a.Summarizer.Model()
+	si.embModel = a.Config.Ollama.EmbeddingModel
+	if si.embModel == "" {
+		si.embModel = "mxbai-embed-large"
+	}
+	si.ollamaURL = a.OllamaURL
+
+	add := func(name string, isDefault, watch bool) {
+		si.totalSources++
+		if counts[name] > 0 {
+			si.indexedSources++
+		} else {
+			si.notIndexed = append(si.notIndexed, name)
+		}
+		if watch {
+			si.watchingSources++
+		}
+		if isDefault {
+			si.defaultSources = append(si.defaultSources, name)
+		} else {
+			si.optInSources = append(si.optInSources, name)
+		}
+	}
+
+	for _, s := range a.Config.Sources {
+		add(s.Name, s.IsSearchDefault(), s.Watch)
+	}
+	for _, u := range a.Config.URLs {
+		add(u.Name, u.IsSearchDefault(), u.Watch)
+	}
+	return si
+}
+
+// nameList formats up to maxShow names with "+N more" overflow.
+func nameList(names []string, maxShow int) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	if len(names) <= maxShow {
+		return strings.Join(names, ", ")
+	}
+	return strings.Join(names[:maxShow], ", ") + fmt.Sprintf(" (+%d more)", len(names)-maxShow)
+}
+
+// printStatusBanner prints a compact two-line status after the header on startup.
+func printStatusBanner(si statusInfo, c cs, cols int) {
+	// Line 1: counts + models
+	line1 := fmt.Sprintf("  %s%d/%d sources indexed%s  %s·%s  %s%d watching%s  %s·%s  %s%s · %s%s",
+		c.bold, si.indexedSources, si.totalSources, c.reset,
+		c.dim, c.reset,
+		c.dim, si.watchingSources, c.reset,
+		c.dim, c.reset,
+		c.dim, si.genModel, si.embModel, c.reset,
+	)
+	fmt.Println(line1)
+
+	// Line 2: default sources
+	if len(si.defaultSources) > 0 {
+		fmt.Printf("  %sDefault search:%s %s\n", c.dim, c.reset, nameList(si.defaultSources, 5))
+	}
+
+	// Line 3 (only if problems): not-indexed warning
+	if len(si.notIndexed) > 0 {
+		fmt.Printf("  %s⚠  Not indexed:%s %s%s  — run: nexus ingest%s\n",
+			c.dim, c.reset,
+			c.dim, nameList(si.notIndexed, 4), c.reset)
+	}
+	fmt.Println()
+}
+
+// printStatusFull prints the full status report for /status.
+func printStatusFull(si statusInfo, c cs, cols int) {
+	fmt.Printf("  %sStatus%s\n\n", c.bold, c.reset)
+
+	// Sources
+	fmt.Printf("  %s%-12s%s %d configured  %s·%s  %d indexed  %s·%s  %d watching\n",
+		c.bold, "Sources", c.reset,
+		si.totalSources,
+		c.dim, c.reset,
+		si.indexedSources,
+		c.dim, c.reset,
+		si.watchingSources,
+	)
+
+	// Default vs opt-in
+	if len(si.defaultSources) > 0 {
+		fmt.Printf("  %s%-12s%s %s\n", c.dim, "Default", c.reset, nameList(si.defaultSources, 6))
+	}
+	if len(si.optInSources) > 0 {
+		fmt.Printf("  %s%-12s%s %s\n", c.dim, "Opt-in", c.reset, nameList(si.optInSources, 6))
+	}
+	if len(si.notIndexed) > 0 {
+		fmt.Printf("  %s%-12s%s %s\n", c.dim+"⚠ "+"Not indexed", "", c.reset, nameList(si.notIndexed, 6))
+	}
+
+	fmt.Println()
+
+	// Models
+	fmt.Printf("  %s%-12s%s %s %s(generation)%s  %s·%s  %s %s(embedding)%s\n",
+		c.bold, "Models", c.reset,
+		si.genModel, c.dim, c.reset,
+		c.dim, c.reset,
+		si.embModel, c.dim, c.reset,
+	)
+	fmt.Printf("  %s%-12s%s %s\n", c.dim, "Ollama", c.reset, si.ollamaURL)
+	fmt.Println()
+
+	if len(si.notIndexed) > 0 {
+		fmt.Printf("  %sRun%s nexus ingest %sto index missing sources%s\n\n",
+			c.bold, c.reset, c.dim, c.reset)
+	}
+}
+
 // printHelp prints the in-chat slash command reference.
 func printHelp(c cs) {
 	cmds := [][2]string{
 		{"/help", "print this reference"},
-		{"/sources", "list all configured sources with indexed status"},
+		{"/status", "show indexed source counts, default sources, and model health"},
+		{"/sources", "list every configured source with type, category, and doc count"},
 		{"/source <name>", "restrict search to a source (comma-sep for multiple: a,b)"},
 		{"/source clear", "remove source filter — search all default sources"},
+		{"/category <name>", "restrict search to a category (e.g. reference, work)"},
+		{"/category clear", "remove category filter"},
 		{"/gl todos [host]", "fetch your GitLab todos and get prioritisation advice"},
 		{"/gl items <group|url>", "list open items in a group"},
 	}
@@ -765,39 +972,48 @@ func printSources(ctx context.Context, a *app.Application, c cs) {
 	fmt.Printf("  %sSources%s  %s(%d configured · %d indexed)%s\n\n",
 		c.bold, c.reset, c.dim, totalSources, indexed, c.reset)
 
-	printSourceRow := func(name, kind, category string, docCount int) {
+	// ● = searched by default  ○ = opt-in only (use /source <name> to include)
+	printSourceRow := func(name, kind, category string, isDefault bool, docCount int) {
+		marker := c.cyan + "●" + c.reset // default
+		scope := ""
+		if !isDefault {
+			marker = c.dim + "○" + c.reset // opt-in
+			scope = c.dim + "  opt-in" + c.reset
+		}
 		status := fmt.Sprintf("%s%s docs%s", c.dim, fmtCount(docCount), c.reset)
 		if docCount == 0 {
-			status = c.dim + "not indexed" + c.reset + "  — run: nexus ingest"
+			status = c.dim + "⚠ not indexed" + c.reset + "  — nexus ingest"
 		}
 		cat := category
 		if cat == "" {
 			cat = "—"
 		}
-		fmt.Printf("  %s%-24s%s  %s%-6s%s  %s%s\n",
+		fmt.Printf("  %s  %s%-22s%s  %s%-6s%s  cat:%-16s  %s%s\n",
+			marker,
 			c.cyan, name, c.reset,
 			c.dim, kind, c.reset,
-			c.dim+"cat:"+c.reset+" "+cat+"  ",
-			status)
+			cat,
+			status,
+			scope)
 	}
 
 	if len(a.Config.Sources) > 0 {
-		fmt.Printf("  %sFILE SOURCES%s\n", c.dim, c.reset)
+		fmt.Printf("  %sFILE SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
 		for _, s := range a.Config.Sources {
-			printSourceRow(s.Name, "file", s.Category, counts[s.Name])
+			printSourceRow(s.Name, "file", s.Category, s.IsSearchDefault(), counts[s.Name])
 		}
 		fmt.Println()
 	}
 
 	if len(a.Config.URLs) > 0 {
-		fmt.Printf("  %sURL SOURCES%s\n", c.dim, c.reset)
+		fmt.Printf("  %sURL SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
 		for _, u := range a.Config.URLs {
-			printSourceRow(u.Name, "url", u.Category, counts[u.Name])
+			printSourceRow(u.Name, "url", u.Category, u.IsSearchDefault(), counts[u.Name])
 		}
 		fmt.Println()
 	}
 
-	fmt.Printf("  %sUse /source <name> to filter your search.%s\n\n", c.dim, c.reset)
+	fmt.Printf("  %sUse /source <name> to filter your search to a specific source.%s\n\n", c.dim, c.reset)
 }
 
 // fmtCount formats an integer with comma separators (e.g. 1234 → "1,234").

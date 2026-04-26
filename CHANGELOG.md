@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Chat — status and health visibility (Phase 2)**
+- Startup banner — every session opens with a compact status block: `N/M sources indexed · K watching · model names`, default source list, and a warning for any sources with zero documents
+- `/status` — prints the full status report on demand mid-session: source counts, default vs opt-in lists, not-indexed sources, model names, and Ollama URL
+- `/sources` updated — every row now shows `●` (searched by default) or `○` (opt-in only) so you can see exactly what a bare question searches without consulting `config.yaml`
+- Prompt always shows active search scope: `[default] ❯` when no filter is set, `[wiki-cs] ❯` when a source filter is active, `[reference] ❯` for a category filter, `[wiki-cs · reference] ❯` when both are set — single consistent place, never scrolls away
+- `/category <name>` — restrict search to a category mid-session (e.g. `/category reference`); `/category clear` removes the filter; tab-completes category names from config; prompt updates immediately
+- `source:` removed from the startup header line — the prompt is the single source of truth for active filters
+
 **Chat — in-session discoverability (Phase 1)**
 - `/help` — prints all slash commands with descriptions directly in chat; no need to exit to look up a command
 - `/sources` — lists every configured source (file and URL) with its type, category, and live indexed document count; sources with zero docs are flagged with the ingest command to run; runs a single DB query per call

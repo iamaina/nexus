@@ -52,7 +52,8 @@ kill $(cat ~/.config/nexus/nexus.pid)
 | Command | Description |
 |---|---|
 | `/help` | Print all slash commands with descriptions |
-| `/sources` | List every configured source with type, category, and indexed doc count |
+| `/status` | Show indexed source counts, default vs opt-in sources, model health |
+| `/sources` | List every source with type, category, doc count, and `●` default / `○` opt-in marker |
 | `/source <name>` | Restrict search to one or more sources (comma-separated: `a,b`) |
 | `/source clear` | Remove source restriction — search all default sources |
 | `/source` or `/source show` | Show current active filter |
