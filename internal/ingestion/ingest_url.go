@@ -159,7 +159,22 @@ func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source str
 		depth  int
 	}
 
+	// Pre-seed visited from the database so restarts skip pages that are
+	// already ingested without fetching them (each fetch costs a polite delay).
+	// Skipped when force=true so --force always re-fetches everything.
 	visited := map[string]bool{seed.String(): true}
+	if !force {
+		for u := range loadVisitedURLs(ctx, a, source) {
+			visited[u] = true
+		}
+		if len(visited) > 1 {
+			logger.Info(ctx, "url.crawl_resume",
+				slog.String("source", source),
+				slog.Int("already_visited", len(visited)-1),
+			)
+		}
+	}
+
 	queue := []entry{{seed.String(), 0}}
 	ingested := 0
 	fetched := 0
@@ -230,6 +245,27 @@ func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source str
 	}
 
 	return ingested, nil
+}
+
+// loadVisitedURLs queries the documents table for all file_paths ingested
+// under source. The returned map is used to pre-seed the visited set in
+// CrawlAndIngest so restarts do not re-fetch already-ingested pages.
+func loadVisitedURLs(ctx context.Context, a *app.Application, source string) map[string]bool {
+	rows, err := a.DB.Query(ctx,
+		`SELECT file_path FROM documents WHERE source_name = $1`, source)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	visited := make(map[string]bool)
+	for rows.Next() {
+		var u string
+		if rows.Scan(&u) == nil {
+			visited[u] = true
+		}
+	}
+	return visited
 }
 
 // isExcluded reports whether rawURL contains any of the given substrings.

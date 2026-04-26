@@ -11,6 +11,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Wikipedia — topic-focused ingestion replacing unbounded crawl**
+- Replaced the single `wikipedia` source (seed: main page, depth: unlimited) with four topic-specific sources: `wiki-cs`, `wiki-ai`, `wiki-sre`, `wiki-quantum`
+- Each source seeds from a curated Wikipedia Outline or topic article; depth 3 stays within the semantic cluster without following links to unrelated domains
+- All four sources share a namespace exclude list: `File:`, `Category:`, `Wikipedia:`, `Talk:`, `User:`, `Template:`, `Special:`, `Portal:`, `Help:`, `Module:`, `Draft:` — previously 16.4% of ingested pages were non-article content
+- `CrawlAndIngest`: visited map is now pre-seeded from the `documents` table on startup — restarts skip already-ingested pages without fetching them (each fetch costs a polite delay; 78K pages × 400ms = ~8 hours of wasted delay on restart); pre-seeding is bypassed when `--force` is set
+
 **`nexus index` — vector index health monitoring and automated rebuild**
 - `nexus index status` — reports index state (healthy / reindex recommended / resize needed), chunk count at build time vs now, growth percentage, and the exact command to run
 - `nexus index rebuild` — runs `REINDEX INDEX CONCURRENTLY` (same lists, queries stay live); use when chunk count has grown 50–100% from build time
