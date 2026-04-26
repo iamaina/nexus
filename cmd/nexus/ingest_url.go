@@ -65,6 +65,7 @@ Since: v0.2.0 (--save, --watch, --background added v0.3.0)`,
 		depth, _ := cmd.Flags().GetInt("depth")
 		source, _ := cmd.Flags().GetString("source")
 		delayStr, _ := cmd.Flags().GetString("delay")
+		scopeURL, _ := cmd.Flags().GetString("scope-url")
 		save, _ := cmd.Flags().GetBool("save")
 		watch, _ := cmd.Flags().GetBool("watch")
 		background, _ := cmd.Flags().GetBool("background")
@@ -87,6 +88,7 @@ Since: v0.2.0 (--save, --watch, --background added v0.3.0)`,
 			newSrc := config.URLSource{
 				Name:      source,
 				URL:       rawURL,
+				ScopeURL:  scopeURL,
 				Recursive: recursive,
 				Depth:     depth,
 				Watch:     watch,
@@ -153,7 +155,7 @@ Since: v0.2.0 (--save, --watch, --background added v0.3.0)`,
 		fmt.Println(")")
 		fmt.Println()
 
-		count, err := ingestion.CrawlAndIngest(ctx, a, rawURL, source, depth, delay, force, dryRun, nil)
+		count, err := ingestion.CrawlAndIngest(ctx, a, rawURL, scopeURL, source, depth, delay, force, dryRun, nil)
 		if err != nil {
 			return err
 		}
@@ -174,6 +176,7 @@ func init() {
 	ingestURLCmd.Flags().Bool("force", false, "Re-ingest pages even if content hash is unchanged")
 	ingestURLCmd.Flags().Int("depth", 0, "Maximum crawl depth when --recursive is set (0 = unlimited)")
 	ingestURLCmd.Flags().String("source", "", "Source name for ingested pages (default: derived from URL host)")
+	ingestURLCmd.Flags().String("scope-url", "", "Link-filter prefix (defaults to the seed URL prefix); use to start at a deep page but crawl a broader tree")
 	ingestURLCmd.Flags().String("delay", "", "Pause between requests, e.g. 200ms, 1s (default: none)")
 	ingestURLCmd.Flags().Bool("save", false, "Persist this source to config.yaml so nexus ingest and nexus watch pick it up automatically")
 	ingestURLCmd.Flags().Bool("watch", false, "When used with --save, set watch: true so nexus watch polls this source on its interval")

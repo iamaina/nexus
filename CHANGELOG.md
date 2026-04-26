@@ -16,6 +16,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Each source seeds from a curated Wikipedia Outline or topic article; depth 3 stays within the semantic cluster without following links to unrelated domains
 - All four sources share a namespace exclude list: `File:`, `Category:`, `Wikipedia:`, `Talk:`, `User:`, `Template:`, `Special:`, `Portal:`, `Help:`, `Module:`, `Draft:` — previously 16.4% of ingested pages were non-article content
 - `CrawlAndIngest`: visited map is now pre-seeded from the `documents` table on startup — restarts skip already-ingested pages without fetching them (each fetch costs a polite delay; 78K pages × 400ms = ~8 hours of wasted delay on restart); pre-seeding is bypassed when `--force` is set
+- `URLSource.ScopeURL` (`scope_url:` in config) — separates the crawl starting point from the link-filter prefix; when set, links are accepted if they fall under `scope_url` rather than the seed URL; allows a deep-linked seed (e.g. `/wiki/Outline_of_computer_science`) to discover all `/wiki/*` articles instead of only pages that start with the seed path; `ingest-url --scope-url` exposes the same control from the CLI
 
 **`nexus index` — vector index health monitoring and automated rebuild**
 - `nexus index status` — reports index state (healthy / reindex recommended / resize needed), chunk count at build time vs now, growth percentage, and the exact command to run
