@@ -15,7 +15,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `/help` — prints all slash commands with descriptions directly in chat; no need to exit to look up a command
 - `/sources` — lists every configured source (file and URL) with its type, category, and live indexed document count; sources with zero docs are flagged with the ingest command to run; runs a single DB query per call
 - Tab completion — pressing Tab after `/` completes all slash commands; pressing Tab after `/source ` completes available source names from the active config; powered by readline's `PrefixCompleter`
-- Chat scroll fixed — dropped alternate screen buffer and scroll region (both have terminal-specific edge cases); screen is cleared once on startup so chat content begins at the top; scrolling up now shows previous chat turns naturally; shell history is only visible far above the startup boundary, not immediately; works identically on all terminal emulators
+- Chat scroll fixed — screen cleared on startup (no shell history above the chat) and scroll region restored to pin the header while new content is added; manual scroll-back shows previous chat turns; header moves only during manual scrollback, which is the accepted trade-off without a full TUI framework
+- Resume now reprints the last 3 exchanges on load so the conversation context is immediately visible; earlier turns are noted with a count and pointer to the session file
 
 **Wikipedia — topic-focused ingestion replacing unbounded crawl**
 - Replaced the single `wikipedia` source (seed: main page, depth: unlimited) with four topic-specific sources: `wiki-cs`, `wiki-ai`, `wiki-sre`, `wiki-quantum`

@@ -192,7 +192,6 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 
 	c := newCS()
 	tty := c.reset != ""
-	cols, _ := termSize()
 
 	threshold := queryThreshold
 	if threshold == 0 {
@@ -213,22 +212,37 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	var logFile *os.File
 
 	// ── Header ───────────────────────────────────────────────────────────────
-	// Clear the screen on startup so chat content begins at the top.
-	// No alternate screen or scroll region — both cause terminal-specific
-	// scroll conflicts. The header is printed once and scrolls away naturally
-	// as the session grows; scrolling up shows previous chat turns.
+	// Clear screen on startup (no shell history above the chat), then pin the
+	// header with a scroll region so new content never pushes it off screen.
+	// No alternate screen — that causes iTerm2 to expose shell history through
+	// its own scrollback settings. Manual scroll-up will move the header but
+	// chat history is visible; during active use the header stays put.
+	cols, rows := termSize()
+
 	if tty {
 		fmt.Print("\033[2J\033[H") // clear screen, cursor home
 	}
 
-	// redrawHeader prints a compact context line after /source changes so the
-	// active filter is always visible without a pinned header.
+	// redrawHeader rewrites the header line in-place when /source changes.
 	redrawHeader := func() {
-		if !tty || len(chatSources) == 0 {
+		if !tty {
 			return
 		}
-		fmt.Printf("  %s● source: %s%s\n\n",
-			c.dim, strings.Join(chatSources, ", "), c.reset)
+		srcPart := ""
+		if len(chatSources) > 0 {
+			srcPart = c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
+		}
+		vis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f", Version, sum.Model(), threshold)
+		// \033[s save cursor · \033[2;1H jump to header row · \033[K clear · rewrite · \033[u restore
+		fmt.Printf("\033[s\033[2;1H%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s\033[K\033[u",
+			pad(len(vis), cols),
+			c.bold+c.cyan, Version, c.reset,
+			c.dim, c.reset,
+			c.bold, sum.Model(), c.reset,
+			c.dim, c.reset,
+			threshold,
+			srcPart,
+		)
 	}
 
 	srcLabel := ""
@@ -264,7 +278,7 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		sessionPath = p
 		history = loaded
 
-		// Open file for appending immediately so Ctrl+C doesn't lose turns
+		// Open file for appending immediately so Ctrl+C doesn't lose turns.
 		f, err := os.OpenFile(sessionPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec
 		if err != nil {
 			logger.Warn(ctx, "could not open session for append", "err", err)
@@ -277,10 +291,30 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 		fmt.Printf("%s%sContinuing:%s %s  %s(%d exchange(s))%s\n",
 			pad(len(contVis), cols),
 			c.dim, c.reset, name, c.dim, len(history)/2, c.reset)
+
+		// Print the last 3 exchanges so the user has immediate context.
+		printResumeHistory(history, c, cols, tty)
 	}
 
 	fmt.Println(c.sep(cols))
 	fmt.Println()
+
+	// ── Scroll region — pin header rows ──────────────────────────────────────
+	// Sets the scrollable region to start below the header so new content
+	// never pushes the header off screen. Applied after all header/history
+	// output so the row count is stable before locking the region.
+	if tty {
+		headerLines := 4 // blank + header + sep + blank
+		if resumeSession != "" {
+			headerLines = 4 + resumeHistoryLines(history, cols)
+		}
+		if rows > headerLines+2 {
+			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
+		}
+		defer func() {
+			fmt.Print("\033[r\n") // reset scroll region on exit
+		}()
+	}
 
 	// ── Main loop ─────────────────────────────────────────────────────────────
 	// readline provides proper line editing: arrow keys, Ctrl+A/E/W/K, history.
@@ -647,6 +681,55 @@ func init() {
 }
 
 // ── Chat slash-command helpers ────────────────────────────────────────────────
+
+// printResumeHistory reprints the last 3 exchanges from a resumed session so
+// the user has immediate context without scrolling through the whole history.
+func printResumeHistory(history []summarizer.ChatMessage, c cs, cols int, tty bool) {
+	// history is pairs: [user, assistant, user, assistant, ...]
+	pairs := len(history) / 2
+	start := pairs - 3
+	if start < 0 {
+		start = 0
+	}
+	if start >= pairs {
+		return
+	}
+	if start > 0 {
+		skipped := start
+		fmt.Printf("  %s… %d earlier exchange(s) — see session file%s\n", c.dim, skipped, c.reset)
+	}
+	fmt.Println()
+	for i := start; i < pairs; i++ {
+		q := history[i*2].Content
+		a := history[i*2+1].Content
+		// Truncate long questions to one line for the recap header.
+		displayQ := q
+		if len(displayQ) > 80 {
+			displayQ = displayQ[:77] + "…"
+		}
+		fmt.Printf("  %s❯ %s%s\n", c.dim, displayQ, c.reset)
+		fmt.Print(renderMarkdown(a, tty, cols))
+		fmt.Println(c.sep(cols))
+		fmt.Println()
+	}
+}
+
+// resumeHistoryLines estimates the terminal rows consumed by printResumeHistory
+// so the scroll region starts below the reprinted history.
+// This is an approximation — we add a fixed buffer rather than measuring exactly.
+func resumeHistoryLines(history []summarizer.ChatMessage, cols int) int {
+	pairs := len(history) / 2
+	shown := 3
+	if pairs < shown {
+		shown = pairs
+	}
+	if shown == 0 {
+		return 1 // "Continuing:" line only
+	}
+	// Each exchange: 1 question line + estimated answer lines + 2 sep lines.
+	// Rough estimate: 8 lines per exchange.
+	return 1 + shown*8
+}
 
 // buildCompleter returns a readline AutoCompleter that tab-completes slash
 // commands and source names. Source names are read from the config at session
