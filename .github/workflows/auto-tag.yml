@@ -103,6 +103,27 @@ jobs:
             echo "✅ Created $branch"
           fi
 
+      - name: Rename old stable branch to maint/
+        if: steps.next.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.next.outputs.tag }}"
+          version="${tag#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+          old_stable="stable/v${major}.${minor}.0"
+          maint_branch="maint/v${major}.${minor}.0"
+
+          old_sha=$(git ls-remote origin "refs/heads/${old_stable}" | cut -f1)
+          if [ -z "$old_sha" ]; then
+            echo "Branch ${old_stable} not found — skipping rename"
+          else
+            git checkout -b "$maint_branch" "$old_sha"
+            git push origin "$maint_branch"
+            git push origin --delete "$old_stable"
+            echo "✅ Renamed ${old_stable} → ${maint_branch}"
+          fi
+
       - name: Protect stable branch (best-effort — requires GitHub Pro/Team)
         if: steps.next.outputs.tag != ''
         env:
