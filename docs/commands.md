@@ -736,6 +736,81 @@ nexus gdoc rm manager-1on1
 
 ---
 
+## `nexus index`
+
+Monitor and rebuild the IVFFlat vector index on the `chunks` table.
+
+The index partitions 1024-dimensional chunk vectors into buckets at build time. Queries probe the nearest buckets instead of scanning all rows — roughly 400× faster at 4M+ chunks with the default `probes=10` setting. The index degrades as data grows because the original bucket centroids no longer reflect the current distribution. These commands tell you when to act and do the rebuild safely.
+
+### `nexus index status`
+
+Show index health and the exact command to run if a rebuild is needed. Read-only.
+
+```bash
+nexus index status
+```
+
+**Example output — healthy:**
+```
+  Index:  chunks_embedding_idx  (IVFFlat, lists=4000)
+  Built:  2026-04-26 with 4,195,592 chunks
+  Now:    4,195,592 chunks  (+0%)
+
+  ✅  Index is healthy. No action needed.
+      Rebuild recommended when chunks reach ~6,293,388.
+```
+
+**Example output — reindex recommended:**
+```
+  Index:  chunks_embedding_idx  (IVFFlat, lists=4000)
+  Built:  2026-04-26 with 4,195,592 chunks
+  Now:    6,800,000 chunks  (+62%)
+
+  ⚠️   Chunk count has grown 62% since the index was built.
+      Bucket centroids are becoming stale. REINDEX recommended.
+
+  Run:  nexus index rebuild
+```
+
+**Example output — resize recommended:**
+```
+  ⚠️   lists=4000 is significantly below optimal (9000).
+      Bucket centroids no longer reflect the current data distribution.
+
+  Run:  nexus index rebuild --resize   ← drop + recreate with lists=9000
+```
+
+### `nexus index rebuild`
+
+Rebuild the index to restore full search performance.
+
+```bash
+nexus index rebuild           # REINDEX CONCURRENTLY — same lists, queries stay live
+nexus index rebuild --resize  # drop + recreate with optimal lists value
+```
+
+**Decision guide:**
+
+| Condition | Recommendation |
+|---|---|
+| Growth < 50% from build count | Nothing — `nexus index status` shows ✅ |
+| Growth 50–100%, lists within 30% of optimal | `nexus index rebuild` |
+| Growth > 100% or lists > 30% below optimal | `nexus index rebuild --resize` |
+
+**`maintenance_work_mem` is handled automatically:**
+
+Both modes check the current setting. If it is below 2 GB, `ALTER SYSTEM SET maintenance_work_mem = '2GB'` is run once to fix it permanently, then 5 GB is set for the current session. No manual `PGOPTIONS` workaround needed.
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--resize` | Drop and recreate with `lists = current_count / 1000` instead of REINDEX |
+
+**Background:** `nexus watch` runs an index health check every 24 h and logs a `[WARN]` message if a rebuild is recommended. No automatic rebuild — the command is always user-driven.
+
+---
+
 ## `nexus version`
 
 Prints the binary version.

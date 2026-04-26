@@ -189,7 +189,23 @@ Since: v0.0.1  (workspace OS layer added v0.1.0)`,
 			}()
 		}
 
-		// 6. Google Docs sync ticker — only starts if credentials are configured.
+		// 6. Index health check — warn every 24 h if a rebuild is recommended.
+		// Runs on a ticker only (not at startup) because it is diagnostic, not
+		// urgent. No auto-rebuild — the user decides when to act.
+		go func() {
+			ticker := time.NewTicker(workspaceSnapTick)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					checkIndexHealth(context.Background(), a)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		// 7. Google Docs sync ticker — only starts if credentials are configured.
 		gdocCount := 0
 		if a.Config.Gdoc.CredentialsPath != "" {
 			docs, _ := a.Gdocs.List(ctx)

@@ -11,6 +11,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**`nexus index` — vector index health monitoring and automated rebuild**
+- `nexus index status` — reports index state (healthy / reindex recommended / resize needed), chunk count at build time vs now, growth percentage, and the exact command to run
+- `nexus index rebuild` — runs `REINDEX INDEX CONCURRENTLY` (same lists, queries stay live); use when chunk count has grown 50–100% from build time
+- `nexus index rebuild --resize` — drops and recreates the index with an optimal `lists` value (`current_count / 1000`); use when chunk count has more than doubled
+- Both modes automatically raise `maintenance_work_mem` to 5 GB for the session and permanently fix the system setting to 2 GB via `ALTER SYSTEM` if it was below that — no `PGOPTIONS` workaround needed
+- Build metadata (chunk count, lists, timestamp) stored as a JSON comment on the index so `status` always has a baseline without extra tables
+- `nexus watch` runs a background index health check every 24 h and logs a warning (`index.reindex_recommended` or `index.rebuild_recommended`) if action is needed — no auto-rebuild, always user-driven
+- `make setup` now writes `NEXUS_DSN` to `~/.zshrc` so `psql "$NEXUS_DSN" -c "..."` works out of the box for anyone running the setup script
+
 **Bug fixes**
 - `nexus workspace scan` — new command: one-shot bootstrap that walks `roots.workspace`, generates `dir_structure.md`, and ingests it as source `workspace-structure`; `nexus organise` now requires this file to exist before proceeding and prints a clear error with the command to run if it is missing
 - `nexus watch`: workspace snapshot now refreshes every 24 h while watch is running, not only on startup — catches subdirectory and non-repo structural changes that fsnotify misses because the workspace watch is non-recursive
