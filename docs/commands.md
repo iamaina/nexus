@@ -138,6 +138,7 @@ nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --
 |---|---|---|
 | `--recursive` | false | Follow all links within the same URL path prefix |
 | `--depth int` | 0 | Max crawl depth (0 = unlimited; 1 = seed + directly linked pages) |
+| `--scope-url string` | same as seed | Link-filter prefix — links are accepted only if their URL starts with this; use when the seed is deeper than the tree you want to crawl (see below) |
 | `--delay duration` | none | Pause between requests, e.g. `200ms`, `1s` — polite crawling |
 | `--source string` | derived from host | Source name for query filtering (e.g. `--source chef-knife-docs`) |
 | `--dry-run` | false | Show every URL that would be ingested without touching the database |
@@ -145,6 +146,19 @@ nexus ingest-url https://docs.chef.io/workstation/26/tools/knife/ --recursive --
 | `--save` | false | Persist this source to `config.yaml` so `nexus ingest` and `nexus watch` pick it up automatically |
 | `--watch` | false | When used with `--save`, set `watch: true` so `nexus watch` polls this source on its interval |
 | `--background` | false | Run the crawl detached; returns immediately and logs to `~/.config/nexus/logs/ingest-url-<name>.log` |
+
+**`--scope-url` — seed vs prefix**
+
+By default the crawler only follows links whose URL starts with the seed URL's path. This is correct for most docs sites, but fails when the seed is a deep-linked page inside a broader tree you want to index:
+
+```bash
+# Bad — only pages starting with /wiki/Outline_of_computer_science are followed:
+nexus ingest-url https://en.wikipedia.org/wiki/Outline_of_computer_science --recursive
+
+# Good — seed at the outline, but follow any /wiki/ link:
+nexus ingest-url https://en.wikipedia.org/wiki/Outline_of_computer_science \
+  --scope-url https://en.wikipedia.org/wiki/ --recursive
+```
 
 **Config-based URL sources** — add to `config.yaml` and they run with `nexus ingest` and `nexus watch`:
 
@@ -157,6 +171,11 @@ urls:
     watch: true       # nexus watch re-checks on interval
     interval: 24h     # polling interval (default: 24h)
     delay: 300ms      # pause between requests
+  - name: wiki-cs
+    url: https://en.wikipedia.org/wiki/Outline_of_computer_science
+    scope_url: https://en.wikipedia.org/wiki/  # broader prefix than the seed
+    recursive: true
+    depth: 3
 ```
 
 **Querying ingested web sources:**

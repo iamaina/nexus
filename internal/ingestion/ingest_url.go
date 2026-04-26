@@ -141,25 +141,60 @@ func ingestURLBody(ctx context.Context, a *app.Application, rawURL, source strin
 }
 
 // CrawlAndIngest fetches seedURL and, when recursive is true, follows all links
-// within the same scheme+host+path prefix. Each page is fetched once — the body
+// whose URL falls within the scope prefix. Each page is fetched once — the body
 // is reused for both ingestion and link extraction. delay is inserted between
 // requests to avoid hammering the server (0 = no delay).
+//
+// scopeURL narrows or widens the link-filter prefix independently of the seed.
+// When empty, the seed URL's path is used as the prefix (original behaviour).
+// Set scopeURL to a shorter path to let a deep-linked seed crawl a broader tree:
+//
+//	seedURL  = https://en.wikipedia.org/wiki/Outline_of_computer_science
+//	scopeURL = https://en.wikipedia.org/wiki/
+//	→ crawl starts at the outline page but follows any /wiki/* link
+//
 // excludePatterns are URL path substrings; any discovered link whose URL contains
 // one of these strings is skipped entirely (never fetched or queued).
 // Returns the number of pages ingested (dry-run: pages that would be ingested).
-func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source string, maxDepth int, delay time.Duration, force, dryRun bool, excludePatterns []string) (int, error) {
+func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, scopeURL, source string, maxDepth int, delay time.Duration, force, dryRun bool, excludePatterns []string) (int, error) {
 	seed, err := url.Parse(seedURL)
 	if err != nil {
 		return 0, fmt.Errorf("parse seed URL: %w", err)
 	}
 	seed = seed.JoinPath()
 
+	// scope defines the path-prefix boundary for link discovery.
+	// Falls back to seed when scopeURL is not set.
+	scope := seed
+	if scopeURL != "" {
+		parsed, err := url.Parse(scopeURL)
+		if err != nil {
+			return 0, fmt.Errorf("parse scope URL: %w", err)
+		}
+		scope = parsed.JoinPath()
+	}
+
 	type entry struct {
 		rawURL string
 		depth  int
 	}
 
+	// Pre-seed visited from the database so restarts skip pages that are
+	// already ingested without fetching them (each fetch costs a polite delay).
+	// Skipped when force=true so --force always re-fetches everything.
 	visited := map[string]bool{seed.String(): true}
+	if !force {
+		for u := range loadVisitedURLs(ctx, a, source) {
+			visited[u] = true
+		}
+		if len(visited) > 1 {
+			logger.Info(ctx, "url.crawl_resume",
+				slog.String("source", source),
+				slog.Int("already_visited", len(visited)-1),
+			)
+		}
+	}
+
 	queue := []entry{{seed.String(), 0}}
 	ingested := 0
 	fetched := 0
@@ -217,7 +252,7 @@ func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source str
 
 		base, _ := url.Parse(cur.rawURL)
 		for _, href := range links {
-			resolved, err := resolveLink(base, seed, href)
+			resolved, err := resolveLink(base, seed, scope, href)
 			if err != nil || visited[resolved] {
 				continue
 			}
@@ -232,6 +267,27 @@ func CrawlAndIngest(ctx context.Context, a *app.Application, seedURL, source str
 	return ingested, nil
 }
 
+// loadVisitedURLs queries the documents table for all file_paths ingested
+// under source. The returned map is used to pre-seed the visited set in
+// CrawlAndIngest so restarts do not re-fetch already-ingested pages.
+func loadVisitedURLs(ctx context.Context, a *app.Application, source string) map[string]bool {
+	rows, err := a.DB.Query(ctx,
+		`SELECT file_path FROM documents WHERE source_name = $1`, source)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	visited := make(map[string]bool)
+	for rows.Next() {
+		var u string
+		if rows.Scan(&u) == nil {
+			visited[u] = true
+		}
+	}
+	return visited
+}
+
 // isExcluded reports whether rawURL contains any of the given substrings.
 func isExcluded(rawURL string, patterns []string) bool {
 	for _, p := range patterns {
@@ -243,8 +299,10 @@ func isExcluded(rawURL string, patterns []string) bool {
 }
 
 // resolveLink resolves href relative to base, returning the absolute URL only
-// if it falls within the seed's scheme+host+path prefix.
-func resolveLink(base, seed *url.URL, href string) (string, error) {
+// if it shares the seed's scheme+host and falls within the scope's path prefix.
+// seed is used for the host check; scope is used for the path-prefix check.
+// When scopeURL was not configured, scope == seed (original behaviour).
+func resolveLink(base, seed, scope *url.URL, href string) (string, error) {
 	if strings.HasPrefix(href, "#") ||
 		strings.HasPrefix(href, "mailto:") ||
 		strings.HasPrefix(href, "javascript:") {
@@ -259,7 +317,7 @@ func resolveLink(base, seed *url.URL, href string) (string, error) {
 	if resolved.Scheme != seed.Scheme || resolved.Host != seed.Host {
 		return "", fmt.Errorf("external")
 	}
-	if !strings.HasPrefix(resolved.Path, seed.Path) {
+	if !strings.HasPrefix(resolved.Path, scope.Path) {
 		return "", fmt.Errorf("outside prefix")
 	}
 	// Reject malformed paths — e.g. docs that contain broken links like

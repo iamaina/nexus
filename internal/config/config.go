@@ -70,6 +70,7 @@ type GdocConfig struct {
 type URLSource struct {
 	Name            string   `yaml:"name"`              // source label used in nexus query results
 	URL             string   `yaml:"url"`               // seed URL to fetch
+	ScopeURL        string   `yaml:"scope_url"`         // link-filter prefix; defaults to seed URL prefix when empty
 	Recursive       bool     `yaml:"recursive"`         // if true, follow links within the same path prefix
 	Depth           int      `yaml:"depth"`             // max crawl depth (0 = unlimited)
 	Exclude         []string `yaml:"exclude"`           // URL path substrings to skip during crawl
