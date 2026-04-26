@@ -212,37 +212,25 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	var logFile *os.File
 
 	// ── Header ───────────────────────────────────────────────────────────────
-	// Clear screen on startup (no shell history above the chat), then pin the
-	// header with a scroll region so new content never pushes it off screen.
-	// No alternate screen — that causes iTerm2 to expose shell history through
-	// its own scrollback settings. Manual scroll-up will move the header but
-	// chat history is visible; during active use the header stays put.
-	cols, rows := termSize()
+	// Clear screen on startup so shell history is not immediately visible when
+	// scrolling up — it is pushed above the startup boundary in the terminal's
+	// scrollback. No scroll region or alternate screen: the scroll region
+	// cannot intercept manual trackpad/mouse scroll (iTerm2 uses its own
+	// scrollback regardless), and alternate screen has iTerm2 setting conflicts.
+	// The header prints once and scrolls away naturally. Post-MVP improvement:
+	// replace with a bubbletea TUI that owns its own scroll buffer.
+	cols, _ := termSize()
 
 	if tty {
 		fmt.Print("\033[2J\033[H") // clear screen, cursor home
 	}
 
-	// redrawHeader rewrites the header line in-place when /source changes.
+	// redrawHeader prints a one-line context reminder after /source changes.
 	redrawHeader := func() {
-		if !tty {
+		if !tty || len(chatSources) == 0 {
 			return
 		}
-		srcPart := ""
-		if len(chatSources) > 0 {
-			srcPart = c.dim + "  ·  " + c.reset + c.bold + "source: " + strings.Join(chatSources, ",") + c.reset
-		}
-		vis := fmt.Sprintf("nexus %s  ·  %s  ·  threshold %.2f", Version, sum.Model(), threshold)
-		// \033[s save cursor · \033[2;1H jump to header row · \033[K clear · rewrite · \033[u restore
-		fmt.Printf("\033[s\033[2;1H%s%snexus %s%s  %s·%s  %s%s%s  %s·%s  threshold %.2f%s\033[K\033[u",
-			pad(len(vis), cols),
-			c.bold+c.cyan, Version, c.reset,
-			c.dim, c.reset,
-			c.bold, sum.Model(), c.reset,
-			c.dim, c.reset,
-			threshold,
-			srcPart,
-		)
+		fmt.Printf("  %s● source → %s%s\n\n", c.dim, strings.Join(chatSources, ", "), c.reset)
 	}
 
 	srcLabel := ""
@@ -298,23 +286,6 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 
 	fmt.Println(c.sep(cols))
 	fmt.Println()
-
-	// ── Scroll region — pin header rows ──────────────────────────────────────
-	// Sets the scrollable region to start below the header so new content
-	// never pushes the header off screen. Applied after all header/history
-	// output so the row count is stable before locking the region.
-	if tty {
-		headerLines := 4 // blank + header + sep + blank
-		if resumeSession != "" {
-			headerLines = 4 + resumeHistoryLines(history, cols)
-		}
-		if rows > headerLines+2 {
-			fmt.Printf("\033[%d;%dr\033[%d;1H", headerLines+1, rows, headerLines+1)
-		}
-		defer func() {
-			fmt.Print("\033[r\n") // reset scroll region on exit
-		}()
-	}
 
 	// ── Main loop ─────────────────────────────────────────────────────────────
 	// readline provides proper line editing: arrow keys, Ctrl+A/E/W/K, history.
@@ -712,23 +683,6 @@ func printResumeHistory(history []summarizer.ChatMessage, c cs, cols int, tty bo
 		fmt.Println(c.sep(cols))
 		fmt.Println()
 	}
-}
-
-// resumeHistoryLines estimates the terminal rows consumed by printResumeHistory
-// so the scroll region starts below the reprinted history.
-// This is an approximation — we add a fixed buffer rather than measuring exactly.
-func resumeHistoryLines(history []summarizer.ChatMessage, cols int) int {
-	pairs := len(history) / 2
-	shown := 3
-	if pairs < shown {
-		shown = pairs
-	}
-	if shown == 0 {
-		return 1 // "Continuing:" line only
-	}
-	// Each exchange: 1 question line + estimated answer lines + 2 sep lines.
-	// Rough estimate: 8 lines per exchange.
-	return 1 + shown*8
 }
 
 // buildCompleter returns a readline AutoCompleter that tab-completes slash

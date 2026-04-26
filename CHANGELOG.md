@@ -15,7 +15,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `/help` — prints all slash commands with descriptions directly in chat; no need to exit to look up a command
 - `/sources` — lists every configured source (file and URL) with its type, category, and live indexed document count; sources with zero docs are flagged with the ingest command to run; runs a single DB query per call
 - Tab completion — pressing Tab after `/` completes all slash commands; pressing Tab after `/source ` completes available source names from the active config; powered by readline's `PrefixCompleter`
-- Chat scroll fixed — screen cleared on startup (no shell history above the chat) and scroll region restored to pin the header while new content is added; manual scroll-back shows previous chat turns; header moves only during manual scrollback, which is the accepted trade-off without a full TUI framework
+- Chat scroll: screen cleared on startup so shell history is not immediately visible when scrolling up; no scroll region or alternate screen (both conflict with iTerm2's native scrollback on manual scroll); header prints once and scrolls away naturally; proper pinned header is a post-MVP item requiring a bubbletea TUI
 - Resume now reprints the last 3 exchanges on load so the conversation context is immediately visible; earlier turns are noted with a count and pointer to the session file
 
 **Wikipedia — topic-focused ingestion replacing unbounded crawl**
