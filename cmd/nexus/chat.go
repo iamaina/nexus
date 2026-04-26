@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -429,6 +430,51 @@ loop:
 				continue
 			}
 
+			// ── /sessions — list recent chat sessions ────────────────────────
+			if question == "/sessions" {
+				printSessions(c, cols)
+				continue
+			}
+
+			// ── /resume <name> — load a past session mid-chat ─────────────────
+			if rest, ok := strings.CutPrefix(question, "/resume"); ok {
+				arg := strings.TrimSpace(rest)
+				if arg == "" {
+					fmt.Printf("  %sUsage: /resume <session-name>  (tab to complete)%s\n\n", c.dim, c.reset)
+					continue
+				}
+				p, err := resolveChatPath(arg)
+				if err != nil {
+					fmt.Printf("  %sSession not found: %s%s\n\n", c.dim, arg, c.reset)
+					continue
+				}
+				loaded, err := loadChatSession(p)
+				if err != nil {
+					fmt.Printf("  %sCould not load session: %v%s\n\n", c.dim, err, c.reset)
+					continue
+				}
+				// Close the current session file and open the new one for appending.
+				if logFile != nil {
+					_ = logFile.Close()
+					logFile = nil
+				}
+				f, openErr := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec
+				if openErr != nil {
+					logger.Warn(ctx, "could not open resumed session for append", "err", openErr)
+				} else {
+					logFile = f
+				}
+				sessionPath = p
+				history = loaded
+				name := strings.TrimSuffix(filepath.Base(p), ".md")
+				contVis := fmt.Sprintf("Switched to: %s  (%d exchange(s))", name, len(history)/2)
+				fmt.Printf("\n%s%sSwitched to:%s %s  %s(%d exchange(s))%s\n",
+					pad(len(contVis), cols),
+					c.dim, c.reset, name, c.dim, len(history)/2, c.reset)
+				printResumeHistory(history, c, cols, tty)
+				continue
+			}
+
 			// ── /gl command — on-demand GitLab context ───────────────────────
 			if rest, ok := strings.CutPrefix(question, "/gl"); ok {
 				arg := strings.TrimSpace(rest)
@@ -758,9 +804,17 @@ func buildCompleter(cfg *config.Config) readline.AutoCompleter {
 		readline.PcItem("show"),
 	)
 
+	// Build /resume completions from saved session names.
+	var resumeItems []readline.PrefixCompleterInterface
+	for _, name := range func() []string { names, _ := chatSessionNames(); return names }() {
+		resumeItems = append(resumeItems, readline.PcItem(name))
+	}
+
 	return readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
 		readline.PcItem("/status"),
+		readline.PcItem("/sessions"),
+		readline.PcItem("/resume", resumeItems...),
 		readline.PcItem("/sources"),
 		readline.PcItem("/source", srcItems...),
 		readline.PcItem("/category", catItems...),
@@ -922,6 +976,8 @@ func printHelp(c cs) {
 		{"/help", "print this reference"},
 		{"/status", "show indexed source counts, default sources, and model health"},
 		{"/sources", "list every configured source with type, category, and doc count"},
+		{"/sessions", "list the 10 most recent chat sessions"},
+		{"/resume <name>", "switch to a past session mid-chat (tab to complete)"},
 		{"/source <name>", "restrict search to a source (comma-sep for multiple: a,b)"},
 		{"/source clear", "remove source filter — search all default sources"},
 		{"/category <name>", "restrict search to a category (e.g. reference, work)"},
@@ -1039,6 +1095,112 @@ func fmtCount(n int) string {
 // ── File helpers ──────────────────────────────────────────────────────────────
 
 // openNewChatFile creates the session file and writes the header.
+// sessionEntry holds metadata for one saved chat session.
+type sessionEntry struct {
+	name      string    // filename without .md extension
+	modTime   time.Time // last modified — used for sort order
+	exchanges int       // number of user turns
+	slug      string    // human-readable part of the filename
+}
+
+// listSessions returns saved sessions sorted newest-first.
+// Each file is opened once to count exchanges; files that cannot be read are skipped.
+func listSessions() ([]sessionEntry, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(home, ".config", "nexus", "chats")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var sessions []sessionEntry
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		// Filename format: 2026-04-26_16-40_slug-here
+		// Split on _ to extract the slug (everything after date and time).
+		parts := strings.SplitN(name, "_", 3)
+		slug := name
+		if len(parts) == 3 {
+			slug = strings.ReplaceAll(parts[2], "-", " ")
+		}
+		sessions = append(sessions, sessionEntry{
+			name:      name,
+			modTime:   info.ModTime(),
+			exchanges: strings.Count(string(data), "**You:** "),
+			slug:      slug,
+		})
+	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].modTime.After(sessions[j].modTime)
+	})
+	return sessions, nil
+}
+
+// printSessions prints a table of recent sessions for /sessions.
+func printSessions(c cs, cols int) {
+	sessions, err := listSessions()
+	if err != nil {
+		fmt.Printf("  %sCould not read sessions: %v%s\n\n", c.dim, err, c.reset)
+		return
+	}
+	if len(sessions) == 0 {
+		fmt.Printf("  %sNo saved sessions yet.%s\n\n", c.dim, c.reset)
+		return
+	}
+
+	const maxShow = 10
+	showing := sessions
+	if len(showing) > maxShow {
+		showing = showing[:maxShow]
+	}
+
+	total := len(sessions)
+	if total > maxShow {
+		fmt.Printf("  %sRecent sessions (showing %d of %d)%s\n\n", c.bold, maxShow, total, c.reset)
+	} else {
+		fmt.Printf("  %sRecent sessions (%d)%s\n\n", c.bold, total, c.reset)
+	}
+
+	for _, s := range showing {
+		date := s.modTime.Format("2006-01-02  15:04")
+		exc := fmt.Sprintf("%d exchange(s)", s.exchanges)
+		// Truncate slug so the row fits within cols.
+		slug := s.slug
+		maxSlug := cols - 22 - len(exc) - 4
+		if maxSlug < 10 {
+			maxSlug = 10
+		}
+		if len(slug) > maxSlug {
+			slug = slug[:maxSlug-1] + "…"
+		}
+		fmt.Printf("  %s%s%s  %-*s  %s%s%s\n",
+			c.dim, date, c.reset,
+			maxSlug, slug,
+			c.dim, exc, c.reset,
+		)
+	}
+
+	fmt.Printf("\n  %s/resume <name>  to continue · tab to complete%s\n\n", c.dim, c.reset)
+}
+
 // Returns the open file (ready for appending) and its path.
 func openNewChatFile(start time.Time, model, firstQuestion string) (*os.File, string, error) {
 	home, err := os.UserHomeDir()

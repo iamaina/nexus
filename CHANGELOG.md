@@ -11,6 +11,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Chat — session navigation (Phase 3)**
+- `/sessions` — lists the 10 most recent chat sessions with date, opening question (derived from filename slug), and exchange count; shows total count when more than 10 exist; tab-completion wired for `/sessions`
+- `/resume <name>` — loads a past session from within the running chat without restarting from the shell; closes the current session file, opens the resumed file for appending, swaps history, and reprints the last 3 exchanges for immediate context; tab-completes all saved session names
+
 **Chat — status and health visibility (Phase 2)**
 - Startup banner — every session opens with a compact status block: `N/M sources indexed · K watching · model names`, default source list, and a warning for any sources with zero documents
 - `/status` — prints the full status report on demand mid-session: source counts, default vs opt-in lists, not-indexed sources, model names, and Ollama URL
