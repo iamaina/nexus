@@ -14,8 +14,12 @@ import (
 )
 
 var (
-	organiseDryRun bool
-	organiseForce  bool
+	organiseDryRun      bool
+	organiseForce       bool
+	organiseReindex     bool
+	organiseStatus      bool
+	organiseConsolidate bool
+	organiseCleanup     bool
 )
 
 var organiseCmd = &cobra.Command{
@@ -34,7 +38,12 @@ Examples:
   nexus organise ~/Downloads
   nexus organise ~/Downloads/kubernetes-handbook.pdf
   nexus organise --dry-run ~/Downloads
-  nexus organise                             # processes personal.watchDirs
+  nexus organise                                        # processes personal.watchDirs
+  nexus organise --reindex ~/Documents/PersonalDocs     # retry un-indexed files in place
+  nexus organise --reindex --dry-run ~/Documents        # preview without making changes
+  nexus organise --status ~/Documents/PersonalDocs      # show index coverage
+  nexus organise --consolidate ~/Documents/PersonalDocs # re-point moved files in the DB
+  nexus organise --cleanup ~/Documents/PersonalDocs     # delete originals, save names in DB
 
 Since: v0.1.0`,
 	Args: cobra.MaximumNArgs(1),
@@ -44,6 +53,92 @@ Since: v0.1.0`,
 		a, ok := ctx.Value(app.AppKey).(*app.Application)
 		if !ok {
 			logger.Error(ctx, "Application not found in context")
+			return
+		}
+
+		// --status: read-only coverage report — how many files are indexed vs missing.
+		if organiseStatus {
+			target := a.Config.Personal.DestDir
+			if len(args) > 0 {
+				var err error
+				target, err = filepath.Abs(args[0])
+				if err != nil {
+					logger.Error(ctx, fmt.Sprintf("Cannot resolve path: %v", err))
+					return
+				}
+			}
+			fmt.Printf("\n  Index coverage for %s\n\n", strings.Replace(target, func() string { h, _ := os.UserHomeDir(); return h }(), "~", 1))
+			if err := organiser.StatusCheck(ctx, a, target); err != nil {
+				logger.Error(ctx, fmt.Sprintf("Status check failed: %v", err))
+			}
+			fmt.Println()
+			return
+		}
+
+		// --cleanup: delete duplicate originals and re-point DB records in one step.
+		// Original filenames are saved to documents.original_path before deletion.
+		if organiseCleanup {
+			target := a.Config.Personal.DestDir
+			if len(args) > 0 {
+				var err error
+				target, err = filepath.Abs(args[0])
+				if err != nil {
+					logger.Error(ctx, fmt.Sprintf("Cannot resolve path: %v", err))
+					return
+				}
+			}
+			fmt.Printf("\n  Scanning %s for duplicate originals...\n\n", strings.Replace(target, func() string { h, _ := os.UserHomeDir(); return h }(), "~", 1))
+			if err := organiser.Cleanup(ctx, a, target); err != nil {
+				logger.Error(ctx, fmt.Sprintf("Cleanup failed: %v", err))
+			}
+			fmt.Println()
+			return
+		}
+
+		// --consolidate: re-point DB records for files that were moved/renamed after
+		// ingestion, so nexus search and query return the current file path.
+		if organiseConsolidate {
+			target := a.Config.Personal.DestDir
+			if len(args) > 0 {
+				var err error
+				target, err = filepath.Abs(args[0])
+				if err != nil {
+					logger.Error(ctx, fmt.Sprintf("Cannot resolve path: %v", err))
+					return
+				}
+			}
+			fmt.Printf("\n  Scanning %s for moved files...\n\n", strings.Replace(target, func() string { h, _ := os.UserHomeDir(); return h }(), "~", 1))
+			if err := organiser.Consolidate(ctx, a, target, organiseDryRun); err != nil {
+				logger.Error(ctx, fmt.Sprintf("Consolidate failed: %v", err))
+			}
+			fmt.Println()
+			return
+		}
+
+		// --reindex: retry ingestion for files already in place but absent from the DB.
+		// Useful for recovering files organised in a previous run that were silently
+		// skipped (e.g. scanned PDFs that now have a text layer after re-scan/OCR, or
+		// any file that failed to ingest for transient reasons).
+		if organiseReindex {
+			target := a.Config.Personal.DestDir
+			if len(args) > 0 {
+				var err error
+				target, err = filepath.Abs(args[0])
+				if err != nil {
+					logger.Error(ctx, fmt.Sprintf("Cannot resolve path: %v", err))
+					return
+				}
+			}
+			verb := "Scanning"
+			if organiseDryRun {
+				verb = "Previewing"
+			}
+			fmt.Printf("\n  %s %s for un-indexed files...\n\n",
+				verb, strings.Replace(target, func() string { h, _ := os.UserHomeDir(); return h }(), "~", 1))
+			if err := organiser.ReindexUnindexed(ctx, a, target, organiseDryRun); err != nil {
+				logger.Error(ctx, fmt.Sprintf("Reindex failed: %v", err))
+			}
+			fmt.Println()
 			return
 		}
 
@@ -227,5 +322,9 @@ func isGitRepo(dir string) bool {
 func init() {
 	organiseCmd.Flags().BoolVar(&organiseDryRun, "dry-run", false, "show plan without moving or ingesting")
 	organiseCmd.Flags().BoolVarP(&organiseForce, "force", "f", false, "re-ingest even if file content is unchanged")
+	organiseCmd.Flags().BoolVar(&organiseReindex, "reindex", false, "retry ingestion for files already in place but absent from the index")
+	organiseCmd.Flags().BoolVar(&organiseStatus, "status", false, "show index coverage for a directory (read-only)")
+	organiseCmd.Flags().BoolVar(&organiseConsolidate, "consolidate", false, "re-point DB records to match files moved/renamed by organise")
+	organiseCmd.Flags().BoolVar(&organiseCleanup, "cleanup", false, "delete duplicate originals and re-point DB records (saves original names)")
 	RootCmd.AddCommand(organiseCmd)
 }

@@ -321,8 +321,13 @@ func processWatchedFile(ctx context.Context, a *app.Application, path string) {
 	}
 
 	cl := result.Classification
-	fmt.Printf("  ✓ Filed [%s/%s]: %s\n",
-		cl.DocType, cl.Language, filepath.Base(result.DestPath))
+	if result.Ingested {
+		fmt.Printf("  ✓ Filed [%s/%s]: %s\n",
+			cl.DocType, cl.Language, filepath.Base(result.DestPath))
+	} else {
+		fmt.Printf("  ✓ Filed [%s/%s]: %s  ⚠ not indexed (no text extracted — scanned document?)\n",
+			cl.DocType, cl.Language, filepath.Base(result.DestPath))
+	}
 }
 
 // regenerateWorkspaceSnapshot generates dir_structure.md and ingests it.

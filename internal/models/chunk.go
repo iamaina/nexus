@@ -308,10 +308,10 @@ func (m *ChunkModel) ListChaptersByBook(ctx context.Context, bookName string) ([
 	return chapters, rows.Err()
 }
 
-// FindByPathOrChapter returns chunks whose document file path or chapter title
-// contains query (case-insensitive LIKE). If source is non-empty, results are
-// additionally filtered by source_name or file_path. Results are ordered by
-// file path then chunk index so related chunks appear together.
+// FindByPathOrChapter returns chunks whose document file path, chapter title,
+// or chunk text contains query (case-insensitive LIKE). If source is non-empty,
+// results are additionally filtered by source_name or file_path. Results are
+// ordered by file path then chunk index so related chunks appear together.
 func (m *ChunkModel) FindByPathOrChapter(ctx context.Context, query, source string) ([]Result, error) {
 	like := "%" + query + "%"
 	args := []any{like}
@@ -332,7 +332,7 @@ func (m *ChunkModel) FindByPathOrChapter(ctx context.Context, query, source stri
 			c.chunk_text
 		FROM chunks c
 		JOIN documents d ON c.document_id = d.id
-		WHERE (d.file_path ILIKE $1 OR c.chapter ILIKE $1)
+		WHERE (d.file_path ILIKE $1 OR COALESCE(d.original_name, '') ILIKE $1 OR c.chapter ILIKE $1 OR c.chunk_text ILIKE $1)
 		%s
 		ORDER BY d.file_path, c.chunk_index
 		LIMIT 100`, sourceFilter),

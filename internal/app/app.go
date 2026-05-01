@@ -187,6 +187,8 @@ func migrate(ctx context.Context, db *pgx.Conn) error {
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS language       TEXT`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS institution    TEXT`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_date       TEXT`,
+		`ALTER TABLE documents DROP COLUMN IF EXISTS original_path`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS original_name TEXT`,
 		`CREATE TABLE IF NOT EXISTS context_sources (
 			id          BIGSERIAL PRIMARY KEY,
 			name        TEXT UNIQUE NOT NULL,

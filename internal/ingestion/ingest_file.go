@@ -225,7 +225,8 @@ func IngestFile(ctx context.Context, a *app.Application, path, source string, fo
 	return true, nil
 }
 
-func hashFile(path string) (string, error) {
+// HashFile returns the SHA-256 hex digest of the file at path.
+func HashFile(path string) (string, error) {
 	f, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		return "", err
@@ -238,3 +239,5 @@ func hashFile(path string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+func hashFile(path string) (string, error) { return HashFile(path) }

@@ -15,10 +15,11 @@ var searchSource string
 
 var searchCmd = &cobra.Command{
 	Use:   "search <term>",
-	Short: "Find documents and sections by filename or heading (not semantic — use query for that)",
-	Long: `Search the index by file path or section heading using a plain substring match.
+	Short: "Find documents by filename, heading, or content (not semantic — use query for that)",
+	Long: `Search the index by file path, section heading, or document content using a plain substring match.
 
-Use this when you know the name of the file or section you want, e.g.:
+Use this when you know a specific word or phrase, e.g.:
+  nexus search "Huisartsenpraktijk"
   nexus search "change_management"
   nexus search "Reviewer checklist"
   nexus search "praefect.tf"

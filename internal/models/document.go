@@ -44,6 +44,21 @@ func (m *DocumentModel) FindDuplicate(ctx context.Context, path, hash string) (s
 	return existing, err
 }
 
+// RePoint updates the file_path for an existing document record and preserves
+// the original filename (basename only) in original_name. COALESCE ensures the
+// earliest known name is kept across multiple re-points. Chunks and embeddings
+// are unchanged since they are keyed by document_id, not file_path.
+func (m *DocumentModel) RePoint(ctx context.Context, oldPath, newPath string) error {
+	_, err := m.DB.Exec(ctx,
+		`UPDATE documents
+		    SET file_path     = $1,
+		        original_name = COALESCE(original_name, $2)
+		  WHERE file_path = $3`,
+		newPath, filepath.Base(oldPath), oldPath,
+	)
+	return err
+}
+
 // List returns all ingested documents, optionally filtered by source name.
 func (m *DocumentModel) List(ctx context.Context, source string) ([]Document, error) {
 	query := `SELECT id, source_name, file_path, chunk_count, char_count,

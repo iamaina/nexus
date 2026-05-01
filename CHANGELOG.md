@@ -29,6 +29,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `nexus search` now matches document body text in addition to file path and section headings
 - `nexus organise` and `nexus watch` now warn when `IngestFile` returns no content instead of printing a silent `✓`
 - Duplicate vs no-content files now reported separately in `--reindex` and `--status` output
+- `ingestion.HashFile` exported so organiser can pre-check for duplicates without re-implementing the hash logic
 
 **Chat — session navigation (Phase 3)**
 - `/sessions` — lists the 10 most recent chat sessions with date, opening question (derived from filename slug), and exchange count; shows total count when more than 10 exist; tab-completion wired for `/sessions`

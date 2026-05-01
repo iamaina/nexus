@@ -199,18 +199,36 @@ nexus query "how do I use knife ssh to run a command on a node" --source chef-kn
 Classifies documents, shows a plan of where each file will go, and moves + ingests on confirmation. Replaces `nexus file`.
 
 ```bash
-nexus organise                                      # process all personal.watchDirs
-nexus organise ~/Downloads                          # process a directory
-nexus organise ~/Downloads/invoice.pdf              # process a single file
-nexus organise --dry-run ~/Downloads                # show plan without moving anything
+nexus organise                                              # process all personal.watchDirs
+nexus organise ~/Downloads                                  # process a directory
+nexus organise ~/Downloads/invoice.pdf                      # process a single file
+nexus organise --dry-run ~/Downloads                        # show plan without moving anything
+nexus organise --status ~/Documents/PersonalDocs            # index coverage report
+nexus organise --reindex ~/Documents/PersonalDocs           # retry un-indexed files in place
+nexus organise --reindex --dry-run ~/Documents/PersonalDocs # preview reindex without changes
+nexus organise --consolidate ~/Documents/PersonalDocs       # re-point moved files in DB
+nexus organise --cleanup ~/Documents/PersonalDocs           # delete duplicate originals
 ```
 
 **Flags:**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--dry-run` | false | Show the plan without moving or ingesting |
+| `--dry-run` | false | Show the plan without moving or ingesting (also applies to `--reindex`) |
 | `--force` / `-f` | false | Re-ingest even if file content is unchanged |
+| `--status` | false | Read-only coverage report: indexed vs missing, with duplicate detection |
+| `--reindex` | false | Retry ingestion for files in place but absent from the index |
+| `--consolidate` | false | Re-point DB records to match files moved/renamed after ingestion |
+| `--cleanup` | false | Delete duplicate originals (both copies on disk); saves original filename to DB |
+
+**Index health flags** (`--status`, `--reindex`, `--consolidate`, `--cleanup`) default to `personal.destDir` when no path is given. They never classify or move files — they operate on the DB and existing file locations only.
+
+**`--status` output legend:**
+- `✓` all indexed
+- `✗ filename` — file exists on disk, not in the index (genuinely un-indexed)
+- `↪ filename (duplicate of ...)` — same content already indexed under a different path
+
+**`--cleanup` safety:** the DB record is re-pointed and the original filename is saved to `documents.original_name` *before* the file is deleted. `nexus search` matches against `original_name` so old filenames remain findable after cleanup.
 
 **How path resolution works:**
 

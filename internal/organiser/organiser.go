@@ -3,6 +3,7 @@
 package organiser
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -16,6 +17,14 @@ import (
 	"github.com/iamaina/nexus/internal/config"
 	"github.com/iamaina/nexus/internal/ingestion"
 	"github.com/iamaina/nexus/internal/models"
+)
+
+// skipKind classifies why a file was not indexed.
+type skipKind int
+
+const (
+	skipNoContent skipKind = iota // no extractable text (scanned PDF, etc.)
+	skipDuplicate                 // same content already indexed at a different path
 )
 
 // FilePlan describes what will happen to one file.
@@ -169,12 +178,406 @@ func Execute(ctx context.Context, a *app.Application, plan Plan, force bool) {
 			Institution: item.cl.Institution,
 			DocDate:     item.cl.Date,
 		}
-		if _, err := ingestion.IngestFile(ctx, a, item.DestPath, "personal", force, meta); err != nil {
+		ingested, err := ingestion.IngestFile(ctx, a, item.DestPath, "personal", force, meta)
+		if err != nil {
 			fmt.Printf("  ! %s — ingest failed: %v\n", filepath.Base(item.DestPath), err)
 		}
 		displayDest := strings.Replace(item.DestPath, home, "~", 1)
-		fmt.Printf("  ✓ %s → %s\n", filepath.Base(item.SrcPath), displayDest)
+		if !ingested && err == nil {
+			fmt.Printf("  ✓ %s → %s  ⚠ not indexed (no text extracted — scanned document?)\n", filepath.Base(item.SrcPath), displayDest)
+		} else {
+			fmt.Printf("  ✓ %s → %s\n", filepath.Base(item.SrcPath), displayDest)
+		}
 	}
+}
+
+// classifyMissing hashes path and checks whether it is a duplicate of an already-indexed
+// file (same content, different path) or genuinely un-indexed content.
+// Called only after alreadyIngested returns false for the file's current path.
+func classifyMissing(ctx context.Context, a *app.Application, path string) (skipKind, string, error) {
+	hash, err := ingestion.HashFile(path)
+	if err != nil {
+		return skipNoContent, "", err
+	}
+	dup, err := a.Documents.FindDuplicate(ctx, path, hash)
+	if err != nil {
+		return skipNoContent, "", err
+	}
+	if dup != "" {
+		return skipDuplicate, dup, nil
+	}
+	return skipNoContent, "", nil
+}
+
+// ReindexUnindexed walks dir recursively, finds every supported file that is
+// absent from the documents table, and retries IngestFile without re-classifying
+// or moving anything. This recovers files that were organised in a previous run
+// but silently skipped (e.g. scanned PDFs with no text layer at the time).
+// When dryRun is true it lists what would be indexed without making any changes.
+func ReindexUnindexed(ctx context.Context, a *app.Application, dir string, dryRun bool) error {
+	home, _ := os.UserHomeDir()
+	var found, indexed, noText, dupes, failed int
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if !SupportedExtensions[ext] {
+			return nil
+		}
+		found++
+		if alreadyIngested(ctx, a, path) {
+			return nil
+		}
+
+		display := strings.Replace(path, home, "~", 1)
+
+		kind, dupPath, err := classifyMissing(ctx, a, path)
+		if err != nil {
+			fmt.Printf("  ! %s — check failed: %v\n", display, err)
+			failed++
+			return nil
+		}
+		if kind == skipDuplicate {
+			dupDisplay := strings.Replace(dupPath, home, "~", 1)
+			fmt.Printf("  ↪ %s — duplicate of %s\n", display, dupDisplay)
+			dupes++
+			return nil
+		}
+
+		if dryRun {
+			fmt.Printf("  ~ %s — would be re-indexed\n", display)
+			indexed++
+			return nil
+		}
+
+		ingested, err := ingestion.IngestFile(ctx, a, path, "personal", false, nil)
+		if err != nil {
+			fmt.Printf("  ! %s — ingest failed: %v\n", display, err)
+			failed++
+			return nil
+		}
+		if ingested {
+			fmt.Printf("  ✓ %s — indexed\n", display)
+			indexed++
+		} else {
+			fmt.Printf("  ⚠ %s — no text extracted (scanned document?)\n", display)
+			noText++
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk %s: %w", dir, err)
+	}
+
+	if dryRun {
+		fmt.Printf("\n  %d file(s) found — %d would be re-indexed, %d duplicate(s)\n",
+			found, indexed, dupes)
+	} else {
+		fmt.Printf("\n  %d file(s) checked — %d newly indexed, %d no text, %d duplicate(s), %d failed\n",
+			found, indexed, noText, dupes, failed)
+	}
+	return nil
+}
+
+// StatusCheck walks dir and reports index coverage: how many supported files
+// exist, how many are indexed, and how many are absent from the index — broken
+// down by extension and skip reason. Read-only; makes no changes.
+func StatusCheck(ctx context.Context, a *app.Application, dir string) error {
+	home, _ := os.UserHomeDir()
+
+	type missingEntry struct {
+		display string
+		kind    skipKind
+		dupOf   string
+	}
+	type extStats struct {
+		total   int
+		indexed int
+		missing []missingEntry
+	}
+	byExt := map[string]*extStats{}
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if !SupportedExtensions[ext] {
+			return nil
+		}
+		if byExt[ext] == nil {
+			byExt[ext] = &extStats{}
+		}
+		byExt[ext].total++
+		if alreadyIngested(ctx, a, path) {
+			byExt[ext].indexed++
+			return nil
+		}
+		display := strings.Replace(path, home, "~", 1)
+		kind, dupPath, _ := classifyMissing(ctx, a, path)
+		dupDisplay := strings.Replace(dupPath, home, "~", 1)
+		byExt[ext].missing = append(byExt[ext].missing, missingEntry{display, kind, dupDisplay})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk %s: %w", dir, err)
+	}
+
+	if len(byExt) == 0 {
+		fmt.Println("  No supported files found.")
+		return nil
+	}
+
+	var totalFiles, totalIndexed, totalDupes, totalNoText int
+	for _, ext := range []string{".pdf", ".md", ".txt"} {
+		s := byExt[ext]
+		if s == nil {
+			continue
+		}
+		totalFiles += s.total
+		totalIndexed += s.indexed
+		missing := len(s.missing)
+		if missing == 0 {
+			fmt.Printf("  %s  %d total — all indexed\n", ext, s.total)
+			continue
+		}
+		fmt.Printf("  %s  %d total — %d indexed, %d not indexed\n",
+			ext, s.total, s.indexed, missing)
+		for _, m := range s.missing {
+			if m.kind == skipDuplicate {
+				fmt.Printf("      ↪ %s  (duplicate of %s)\n", m.display, m.dupOf)
+				totalDupes++
+			} else {
+				fmt.Printf("      ✗ %s\n", m.display)
+				totalNoText++
+			}
+		}
+	}
+
+	totalMissing := totalDupes + totalNoText
+	fmt.Printf("\n  Total: %d file(s) — %d indexed (%.0f%%), %d not indexed\n",
+		totalFiles, totalIndexed,
+		float64(totalIndexed)/float64(totalFiles)*100,
+		totalMissing)
+
+	if totalDupes > 0 {
+		fmt.Printf("\n  %d duplicate(s) — content already searchable under the original filename.\n", totalDupes)
+	}
+	if totalNoText > 0 {
+		fmt.Printf("\n  %d file(s) with no text extracted (scanned documents).\n", totalNoText)
+		fmt.Println("  Run `nexus organise --reindex` to retry once a text layer is available.")
+	}
+	return nil
+}
+
+// consolidatePlan describes one DB re-point: the file lives at CurrentPath on
+// disk but the documents table still records its pre-move location as OldPath.
+type consolidatePlan struct {
+	currentPath string
+	oldPath     string
+}
+
+// Consolidate walks dir, identifies files whose content is already in the DB
+// under a different path (duplicates produced by nexus organise renaming files),
+// and — when the original path no longer exists on disk — re-points the DB
+// record to the current location without re-ingesting or re-embedding anything.
+//
+// Files where both the current path and the original DB path exist on disk are
+// genuine duplicates (two copies); those are reported but left untouched.
+//
+// When dryRun is true the plan is printed but nothing is written to the DB.
+func Consolidate(ctx context.Context, a *app.Application, dir string, dryRun bool) error {
+	home, _ := os.UserHomeDir()
+
+	var plan []consolidatePlan
+	var genuineDupes []string
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if !SupportedExtensions[ext] {
+			return nil
+		}
+		if alreadyIngested(ctx, a, path) {
+			return nil
+		}
+		kind, oldPath, err := classifyMissing(ctx, a, path)
+		if err != nil || kind != skipDuplicate {
+			return nil
+		}
+		if _, statErr := os.Stat(oldPath); statErr == nil {
+			// Original file still exists — genuine duplicate, leave it alone.
+			genuineDupes = append(genuineDupes, strings.Replace(path, home, "~", 1))
+			return nil
+		}
+		plan = append(plan, consolidatePlan{currentPath: path, oldPath: oldPath})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk %s: %w", dir, err)
+	}
+
+	if len(plan) == 0 {
+		fmt.Println("  Nothing to consolidate.")
+		if len(genuineDupes) > 0 {
+			fmt.Printf("  %d genuine duplicate(s) skipped (both copies exist on disk):\n", len(genuineDupes))
+			for _, d := range genuineDupes {
+				fmt.Printf("      %s\n", d)
+			}
+		}
+		return nil
+	}
+
+	fmt.Printf("  Consolidation plan (%d record(s)):\n\n", len(plan))
+	for _, p := range plan {
+		oldDisplay := strings.Replace(p.oldPath, home, "~", 1)
+		newDisplay := strings.Replace(p.currentPath, home, "~", 1)
+		fmt.Printf("    %s\n      → %s\n\n", oldDisplay, newDisplay)
+	}
+
+	if dryRun {
+		fmt.Println("  [dry-run] No changes made.")
+		return nil
+	}
+
+	fmt.Print("  Apply? [Y/n] ")
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "" && answer != "y" && answer != "yes" {
+		fmt.Println("  Cancelled.")
+		return nil
+	}
+
+	fmt.Println()
+	var succeeded, failed int
+	for _, p := range plan {
+		if err := a.Documents.RePoint(ctx, p.oldPath, p.currentPath); err != nil {
+			display := strings.Replace(p.currentPath, home, "~", 1)
+			fmt.Printf("  ! %s — failed: %v\n", display, err)
+			failed++
+		} else {
+			newDisplay := strings.Replace(p.currentPath, home, "~", 1)
+			fmt.Printf("  ✓ %s\n", newDisplay)
+			succeeded++
+		}
+	}
+
+	fmt.Printf("\n  %d record(s) re-pointed, %d failed\n", succeeded, failed)
+	if len(genuineDupes) > 0 {
+		fmt.Printf("  %d genuine duplicate(s) left untouched (both copies exist on disk)\n", len(genuineDupes))
+	}
+	return nil
+}
+
+// cleanupPair is a genuine duplicate: both the organised path and the original
+// path exist on disk with identical content.
+type cleanupPair struct {
+	keepPath   string // organised/canonical path — stays on disk, DB re-pointed here
+	deletePath string // original path — will be deleted after confirmation
+}
+
+// Cleanup finds files in dir whose content is already indexed under a different
+// path AND whose original path still exists on disk (genuine duplicates). It
+// shows a plan of what will be kept and what will be deleted, asks for
+// confirmation, deletes the originals, and re-points the DB records so the
+// canonical organised path becomes the authoritative location. The original
+// filename is preserved in the documents.original_path column.
+func Cleanup(ctx context.Context, a *app.Application, dir string) error {
+	home, _ := os.UserHomeDir()
+
+	var pairs []cleanupPair
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if !SupportedExtensions[ext] {
+			return nil
+		}
+		if alreadyIngested(ctx, a, path) {
+			return nil
+		}
+		kind, oldPath, err := classifyMissing(ctx, a, path)
+		if err != nil || kind != skipDuplicate {
+			return nil
+		}
+		// Only handle pairs where both copies are still on disk.
+		if _, statErr := os.Stat(oldPath); statErr != nil {
+			return nil
+		}
+		pairs = append(pairs, cleanupPair{keepPath: path, deletePath: oldPath})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk %s: %w", dir, err)
+	}
+
+	if len(pairs) == 0 {
+		fmt.Println("  No duplicate originals found.")
+		return nil
+	}
+
+	fmt.Printf("  Cleanup plan (%d duplicate(s)):\n\n", len(pairs))
+	for _, p := range pairs {
+		keepDisplay := strings.Replace(p.keepPath, home, "~", 1)
+		delDisplay := strings.Replace(p.deletePath, home, "~", 1)
+		fmt.Printf("    keep    %s\n", keepDisplay)
+		fmt.Printf("    delete  %s\n\n", delDisplay)
+	}
+	fmt.Println("  Original filenames will be saved in the database before deletion.")
+	fmt.Println("  Deleted files cannot be recovered — make sure you have reviewed the plan.")
+	fmt.Println()
+
+	fmt.Print("  Apply? [Y/n] ")
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "" && answer != "y" && answer != "yes" {
+		fmt.Println("  Cancelled.")
+		return nil
+	}
+
+	fmt.Println()
+	var succeeded, failed int
+	for _, p := range pairs {
+		// Re-point first — if this fails, don't delete.
+		if err := a.Documents.RePoint(ctx, p.deletePath, p.keepPath); err != nil {
+			display := strings.Replace(p.keepPath, home, "~", 1)
+			fmt.Printf("  ! %s — DB update failed, skipping delete: %v\n", display, err)
+			failed++
+			continue
+		}
+		if err := os.Remove(p.deletePath); err != nil {
+			display := strings.Replace(p.deletePath, home, "~", 1)
+			fmt.Printf("  ! could not delete %s: %v\n", display, err)
+			failed++
+			continue
+		}
+		keepDisplay := strings.Replace(p.keepPath, home, "~", 1)
+		fmt.Printf("  ✓ %s\n", keepDisplay)
+		succeeded++
+	}
+
+	fmt.Printf("\n  %d duplicate(s) cleaned up, %d failed\n", succeeded, failed)
+	return nil
 }
 
 // alreadyIngested reports whether srcPath is already present in the documents
