@@ -902,76 +902,64 @@ func nameList(names []string, maxShow int) string {
 }
 
 // printStatusBanner prints a compact two-line status after the header on startup.
-func printStatusBanner(si statusInfo, c cs, cols int) {
-	// Line 1: counts + models
-	line1 := fmt.Sprintf("  %s%d/%d sources indexed%s  %s·%s  %s%d watching%s  %s·%s  %s%s · %s%s",
+func renderStatusBanner(si statusInfo, c cs) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %s%d/%d sources indexed%s  %s·%s  %s%d watching%s  %s·%s  %s%s · %s%s\n",
 		c.bold, si.indexedSources, si.totalSources, c.reset,
 		c.dim, c.reset,
 		c.dim, si.watchingSources, c.reset,
 		c.dim, c.reset,
 		c.dim, si.genModel, si.embModel, c.reset,
 	)
-	fmt.Println(line1)
-
-	// Line 2: default sources
 	if len(si.defaultSources) > 0 {
-		fmt.Printf("  %sDefault search:%s %s\n", c.dim, c.reset, nameList(si.defaultSources, 5))
+		fmt.Fprintf(&b, "  %sDefault search:%s %s\n", c.dim, c.reset, nameList(si.defaultSources, 5))
 	}
-
-	// Line 3 (only if problems): not-indexed warning
 	if len(si.notIndexed) > 0 {
-		fmt.Printf("  %s⚠  Not indexed:%s %s%s  — run: nexus ingest%s\n",
-			c.dim, c.reset,
-			c.dim, nameList(si.notIndexed, 4), c.reset)
+		fmt.Fprintf(&b, "  %s⚠  Not indexed:%s %s%s  — run: nexus ingest%s\n",
+			c.dim, c.reset, c.dim, nameList(si.notIndexed, 4), c.reset)
 	}
-	fmt.Println()
+	b.WriteString("\n")
+	return b.String()
 }
 
-// printStatusFull prints the full status report for /status.
-func printStatusFull(si statusInfo, c cs, cols int) {
-	fmt.Printf("  %sStatus%s\n\n", c.bold, c.reset)
+func printStatusBanner(si statusInfo, c cs, _ int) { fmt.Print(renderStatusBanner(si, c)) }
 
-	// Sources
-	fmt.Printf("  %s%-12s%s %d configured  %s·%s  %d indexed  %s·%s  %d watching\n",
+func renderStatusFull(si statusInfo, c cs) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %sStatus%s\n\n", c.bold, c.reset)
+	fmt.Fprintf(&b, "  %s%-12s%s %d configured  %s·%s  %d indexed  %s·%s  %d watching\n",
 		c.bold, "Sources", c.reset,
-		si.totalSources,
-		c.dim, c.reset,
-		si.indexedSources,
-		c.dim, c.reset,
+		si.totalSources, c.dim, c.reset,
+		si.indexedSources, c.dim, c.reset,
 		si.watchingSources,
 	)
-
-	// Default vs opt-in
 	if len(si.defaultSources) > 0 {
-		fmt.Printf("  %s%-12s%s %s\n", c.dim, "Default", c.reset, nameList(si.defaultSources, 6))
+		fmt.Fprintf(&b, "  %s%-12s%s %s\n", c.dim, "Default", c.reset, nameList(si.defaultSources, 6))
 	}
 	if len(si.optInSources) > 0 {
-		fmt.Printf("  %s%-12s%s %s\n", c.dim, "Opt-in", c.reset, nameList(si.optInSources, 6))
+		fmt.Fprintf(&b, "  %s%-12s%s %s\n", c.dim, "Opt-in", c.reset, nameList(si.optInSources, 6))
 	}
 	if len(si.notIndexed) > 0 {
-		fmt.Printf("  %s%-12s%s %s\n", c.dim+"⚠ "+"Not indexed", "", c.reset, nameList(si.notIndexed, 6))
+		fmt.Fprintf(&b, "  %s⚠ %-11s%s %s\n", c.dim, "Not indexed", c.reset, nameList(si.notIndexed, 6))
 	}
-
-	fmt.Println()
-
-	// Models
-	fmt.Printf("  %s%-12s%s %s %s(generation)%s  %s·%s  %s %s(embedding)%s\n",
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "  %s%-12s%s %s %s(generation)%s  %s·%s  %s %s(embedding)%s\n",
 		c.bold, "Models", c.reset,
 		si.genModel, c.dim, c.reset,
 		c.dim, c.reset,
 		si.embModel, c.dim, c.reset,
 	)
-	fmt.Printf("  %s%-12s%s %s\n", c.dim, "Ollama", c.reset, si.ollamaURL)
-	fmt.Println()
-
+	fmt.Fprintf(&b, "  %s%-12s%s %s\n\n", c.dim, "Ollama", c.reset, si.ollamaURL)
 	if len(si.notIndexed) > 0 {
-		fmt.Printf("  %sRun%s nexus ingest %sto index missing sources%s\n\n",
+		fmt.Fprintf(&b, "  %sRun%s nexus ingest %sto index missing sources%s\n\n",
 			c.bold, c.reset, c.dim, c.reset)
 	}
+	return b.String()
 }
 
-// printHelp prints the in-chat slash command reference.
-func printHelp(c cs) {
+func printStatusFull(si statusInfo, c cs, _ int) { fmt.Print(renderStatusFull(si, c)) }
+
+func renderHelp(c cs) string {
 	cmds := [][2]string{
 		{"/help", "print this reference"},
 		{"/status", "show indexed source counts, default sources, and model health"},
@@ -985,19 +973,23 @@ func printHelp(c cs) {
 		{"/gl todos [host]", "fetch your GitLab todos and get prioritisation advice"},
 		{"/gl items <group|url>", "list open items in a group"},
 	}
-
-	fmt.Printf("  %sSlash commands%s\n\n", c.bold, c.reset)
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %sSlash commands%s\n\n", c.bold, c.reset)
 	for _, cmd := range cmds {
-		fmt.Printf("  %s%-26s%s %s%s%s\n",
-			c.cyan, cmd[0], c.reset,
-			c.dim, cmd[1], c.reset)
+		fmt.Fprintf(&b, "  %s%-26s%s %s%s%s\n",
+			c.cyan, cmd[0], c.reset, c.dim, cmd[1], c.reset)
 	}
-	fmt.Printf("\n  %sType 'exit' or 'quit' to end the session.%s\n\n", c.dim, c.reset)
+	fmt.Fprintf(&b, "\n  %sType 'exit' or 'quit' to end the session.%s\n\n", c.dim, c.reset)
+	return b.String()
 }
 
-// printSources lists all configured sources with their type, category, and
-// indexed document count. Sources with zero documents are flagged.
-func printSources(ctx context.Context, a *app.Application, c cs) {
+func printHelp(c cs) { fmt.Print(renderHelp(c)) }
+
+// renderSources builds the /sources output and returns it as a string.
+// printSources is a thin wrapper that prints to stdout (readline path).
+func renderSources(ctx context.Context, a *app.Application, c cs) string {
+	var b strings.Builder
+
 	// Count indexed documents per source name.
 	counts := make(map[string]int)
 	rows, err := a.DB.Query(ctx, `SELECT source_name, COUNT(*) FROM documents GROUP BY source_name`)
@@ -1025,11 +1017,11 @@ func printSources(ctx context.Context, a *app.Application, c cs) {
 		}
 	}
 
-	fmt.Printf("  %sSources%s  %s(%d configured · %d indexed)%s\n\n",
+	fmt.Fprintf(&b, "  %sSources%s  %s(%d configured · %d indexed)%s\n\n",
 		c.bold, c.reset, c.dim, totalSources, indexed, c.reset)
 
 	// ● = searched by default  ○ = opt-in only (use /source <name> to include)
-	printSourceRow := func(name, kind, category string, isDefault bool, docCount int) {
+	writeSourceRow := func(name, kind, category string, isDefault bool, docCount int) {
 		marker := c.cyan + "●" + c.reset // default
 		scope := ""
 		if !isDefault {
@@ -1044,7 +1036,7 @@ func printSources(ctx context.Context, a *app.Application, c cs) {
 		if cat == "" {
 			cat = "—"
 		}
-		fmt.Printf("  %s  %s%-22s%s  %s%-6s%s  cat:%-16s  %s%s\n",
+		fmt.Fprintf(&b, "  %s  %s%-22s%s  %s%-6s%s  cat:%-16s  %s%s\n",
 			marker,
 			c.cyan, name, c.reset,
 			c.dim, kind, c.reset,
@@ -1054,23 +1046,26 @@ func printSources(ctx context.Context, a *app.Application, c cs) {
 	}
 
 	if len(a.Config.Sources) > 0 {
-		fmt.Printf("  %sFILE SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
+		fmt.Fprintf(&b, "  %sFILE SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
 		for _, s := range a.Config.Sources {
-			printSourceRow(s.Name, "file", s.Category, s.IsSearchDefault(), counts[s.Name])
+			writeSourceRow(s.Name, "file", s.Category, s.IsSearchDefault(), counts[s.Name])
 		}
-		fmt.Println()
+		b.WriteString("\n")
 	}
 
 	if len(a.Config.URLs) > 0 {
-		fmt.Printf("  %sURL SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
+		fmt.Fprintf(&b, "  %sURL SOURCES%s  %s● default  ○ opt-in%s\n", c.bold, c.reset, c.dim, c.reset)
 		for _, u := range a.Config.URLs {
-			printSourceRow(u.Name, "url", u.Category, u.IsSearchDefault(), counts[u.Name])
+			writeSourceRow(u.Name, "url", u.Category, u.IsSearchDefault(), counts[u.Name])
 		}
-		fmt.Println()
+		b.WriteString("\n")
 	}
 
-	fmt.Printf("  %sUse /source <name> to filter your search to a specific source.%s\n\n", c.dim, c.reset)
+	fmt.Fprintf(&b, "  %sUse /source <name> to filter your search to a specific source.%s\n\n", c.dim, c.reset)
+	return b.String()
 }
+
+func printSources(ctx context.Context, a *app.Application, c cs) { fmt.Print(renderSources(ctx, a, c)) }
 
 // fmtCount formats an integer with comma separators (e.g. 1234 → "1,234").
 func fmtCount(n int) string {
@@ -1154,16 +1149,19 @@ func listSessions() ([]sessionEntry, error) {
 	return sessions, nil
 }
 
-// printSessions prints a table of recent sessions for /sessions.
-func printSessions(c cs, cols int) {
+// renderSessions builds the /sessions output and returns it as a string.
+// printSessions is a thin wrapper that prints to stdout (readline path).
+func renderSessions(c cs, cols int) string {
+	var b strings.Builder
+
 	sessions, err := listSessions()
 	if err != nil {
-		fmt.Printf("  %sCould not read sessions: %v%s\n\n", c.dim, err, c.reset)
-		return
+		fmt.Fprintf(&b, "  %sCould not read sessions: %v%s\n\n", c.dim, err, c.reset)
+		return b.String()
 	}
 	if len(sessions) == 0 {
-		fmt.Printf("  %sNo saved sessions yet.%s\n\n", c.dim, c.reset)
-		return
+		fmt.Fprintf(&b, "  %sNo saved sessions yet.%s\n\n", c.dim, c.reset)
+		return b.String()
 	}
 
 	const maxShow = 10
@@ -1174,9 +1172,9 @@ func printSessions(c cs, cols int) {
 
 	total := len(sessions)
 	if total > maxShow {
-		fmt.Printf("  %sRecent sessions (showing %d of %d)%s\n\n", c.bold, maxShow, total, c.reset)
+		fmt.Fprintf(&b, "  %sRecent sessions (showing %d of %d)%s\n\n", c.bold, maxShow, total, c.reset)
 	} else {
-		fmt.Printf("  %sRecent sessions (%d)%s\n\n", c.bold, total, c.reset)
+		fmt.Fprintf(&b, "  %sRecent sessions (%d)%s\n\n", c.bold, total, c.reset)
 	}
 
 	for _, s := range showing {
@@ -1184,22 +1182,22 @@ func printSessions(c cs, cols int) {
 		exc := fmt.Sprintf("%d exchange(s)", s.exchanges)
 		// Truncate slug so the row fits within cols.
 		slug := s.slug
-		maxSlug := cols - 22 - len(exc) - 4
-		if maxSlug < 10 {
-			maxSlug = 10
-		}
+		maxSlug := max(cols-22-len(exc)-4, 10)
 		if len(slug) > maxSlug {
 			slug = slug[:maxSlug-1] + "…"
 		}
-		fmt.Printf("  %s%s%s  %-*s  %s%s%s\n",
+		fmt.Fprintf(&b, "  %s%s%s  %-*s  %s%s%s\n",
 			c.dim, date, c.reset,
 			maxSlug, slug,
 			c.dim, exc, c.reset,
 		)
 	}
 
-	fmt.Printf("\n  %s/resume <name>  to continue · tab to complete%s\n\n", c.dim, c.reset)
+	fmt.Fprintf(&b, "\n  %s/resume <name>  to continue · tab to complete%s\n\n", c.dim, c.reset)
+	return b.String()
 }
+
+func printSessions(c cs, cols int) { fmt.Print(renderSessions(c, cols)) }
 
 // Returns the open file (ready for appending) and its path.
 func openNewChatFile(start time.Time, model, firstQuestion string) (*os.File, string, error) {

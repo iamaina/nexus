@@ -11,6 +11,25 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+**Chat — bubbletea TUI**
+- Replaced readline-based chat with a full bubbletea TUI: alt screen, scrollable viewport, spinner during generation, clean Ctrl+C handling
+- Tab completion for slash commands and source/category names — LCP expansion when multiple matches; suggestions shown inline
+- Session persistence and `--resume` work unchanged; session file written on every exchange
+- OSC 11 escape sequence no longer leaks into viewport — renderer created once before alt screen opens
+
+**`nexus organise` — index health and recovery**
+- `--status [dir]` — read-only coverage report: indexed vs missing by extension; distinguishes un-indexed files (`✗`) from content-identical duplicates (`↪`); defaults to `personal.destDir`
+- `--reindex [dir]` — retry ingestion for files in place but absent from the index; `--dry-run` previews without changes
+- `--consolidate [dir]` — re-point DB records for files moved/renamed after ingestion; saves original filename to `documents.original_name`
+- `--cleanup [dir]` — show plan and delete duplicate originals where both copies exist on disk; DB re-point always runs before delete so no data is lost on delete failure
+- `documents.original_name` — stores original filename (basename only) when a record is re-pointed; `nexus search` matches against it so old filenames remain findable after cleanup
+
+### Fixed
+
+- `nexus search` now matches document body text in addition to file path and section headings
+- `nexus organise` and `nexus watch` now warn when `IngestFile` returns no content instead of printing a silent `✓`
+- Duplicate vs no-content files now reported separately in `--reindex` and `--status` output
+
 **Chat — session navigation (Phase 3)**
 - `/sessions` — lists the 10 most recent chat sessions with date, opening question (derived from filename slug), and exchange count; shows total count when more than 10 exist; tab-completion wired for `/sessions`
 - `/resume <name>` — loads a past session from within the running chat without restarting from the shell; closes the current session file, opens the resumed file for appending, swaps history, and reprints the last 3 exchanges for immediate context; tab-completes all saved session names

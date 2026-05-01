@@ -6,8 +6,11 @@ Complete reference for every nexus CLI command and flag.
 
 ## `nexus` — interactive chat (default)
 
-Running `nexus` with no subcommand starts an interactive chat session. Ask anything in
-plain English. Answers are cited and streamed token by token. Sessions are saved to
+Running `nexus` with no subcommand starts an interactive chat session. When connected to
+a terminal, a full bubbletea TUI opens (alt screen, scrollable viewport, spinner during
+generation). When piped or run non-interactively, the plain streaming mode is used instead.
+
+Ask anything in plain English. Answers are cited. Sessions are saved to
 `~/.config/nexus/chats/` automatically after each exchange.
 
 ```bash
@@ -26,8 +29,8 @@ nexus --resume 2026-04-20_14-32_praefect           # continue a saved session (t
 | `--category string` | "" | Restrict search to sources in this category (e.g. `reference`, `work`) |
 | `--threshold float` | 0 (uses config) | Minimum cosine similarity score to include a chunk |
 
-Inside a session, type `exit` or `quit` to end, or press `Ctrl+C`. The session file is
-updated after every exchange so `Ctrl+C` only loses the answer that was in progress.
+Inside the TUI, press `Ctrl+C` or type `exit` to end the session. Tab completes slash
+commands and source names. The session file is updated after every exchange.
 
 **Keyboard shortcuts:**
 

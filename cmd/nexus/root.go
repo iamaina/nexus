@@ -86,6 +86,9 @@ Since: v0.1.0  (--category added v0.2.0)`,
 			fmt.Printf("nexus %s\n", Version)
 			return nil
 		}
+		if isTerminal() {
+			return runChatTUI(cmd, resumeSession)
+		}
 		return runChatSession(cmd, resumeSession)
 	},
 }
