@@ -205,7 +205,16 @@ func (r *resource) label() string {
 func fetchResource(ctx context.Context, r *resource) (name, text string, err error) {
 	data, err := callGlab(ctx, r.Host, r.apiPath())
 	if err != nil && r.Kind == "work_items" {
-		// Fall back: work_items API may not be available on older instances.
+		// Group work-item URLs (/groups/…/-/work_items/N) map to either epics or
+		// issues. Try epics first (they share the same IID in the browser URL),
+		// then fall back to the issues endpoint.
+		if r.IsGroup && r.ID != "" {
+			encoded := strings.ReplaceAll(r.Path, "/", "%2F")
+			epicPath := fmt.Sprintf("/groups/%s/epics/%s", encoded, r.ID)
+			if epicData, epicErr := callGlab(ctx, r.Host, epicPath); epicErr == nil {
+				return r.label(), formatSingleEpic(epicData), nil
+			}
+		}
 		fallback := *r
 		fallback.Kind = "issues"
 		data, err = callGlab(ctx, fallback.Host, fallback.apiPath())
@@ -389,6 +398,27 @@ func formatSingleMR(data []byte) string {
 	}
 	if mr.Description != "" {
 		fmt.Fprintf(&sb, "\n%s\n", truncate(mr.Description, 800))
+	}
+	return sb.String()
+}
+
+func formatSingleEpic(data []byte) string {
+	var epic issueJSON // epics share the same JSON shape as issues
+	if err := json.Unmarshal(data, &epic); err != nil {
+		return string(data)
+	}
+	var sb strings.Builder
+	if epic.WebURL != "" {
+		fmt.Fprintf(&sb, "**Epic #%d:** [%s](%s)\n", epic.IID, epic.Title, epic.WebURL)
+	} else {
+		fmt.Fprintf(&sb, "**Epic #%d:** %s\n", epic.IID, epic.Title)
+	}
+	fmt.Fprintf(&sb, "State: %s  Author: @%s\n", epic.State, epic.Author.Username)
+	if labels := parseLabels(epic.Labels); len(labels) > 0 {
+		fmt.Fprintf(&sb, "Labels: %s\n", strings.Join(labels, ", "))
+	}
+	if epic.Description != "" {
+		fmt.Fprintf(&sb, "\n%s\n", truncate(epic.Description, 800))
 	}
 	return sb.String()
 }

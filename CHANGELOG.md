@@ -17,6 +17,9 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Session persistence and `--resume` work unchanged; session file written on every exchange
 - OSC 11 escape sequence no longer leaks into viewport — renderer created once before alt screen opens
 
+**GitLab context — group work items resolve to epics**
+- A group work-item URL (`/groups/<path>/-/work_items/<n>`) is now tried against the epics endpoint before falling back to issues, so pasting an epic link returns the epic instead of failing or resolving to an unrelated issue with the same IID
+
 **Live context — tag-scoped injection**
 - `context_sources.tags` — comma-separated keywords on a live context source. A tagged source is injected only when the query contains a matching keyword (case-insensitive); an untagged source keeps the previous always-inject behaviour
 - `nexus context add --tags "..."` and `nexus context tags <name> "<tags>"` — set tags at creation or on an existing source; passing `""` clears them
