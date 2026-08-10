@@ -17,6 +17,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Session persistence and `--resume` work unchanged; session file written on every exchange
 - OSC 11 escape sequence no longer leaks into viewport — renderer created once before alt screen opens
 
+**Live context — tag-scoped injection**
+- `context_sources.tags` — comma-separated keywords on a live context source. A tagged source is injected only when the query contains a matching keyword (case-insensitive); an untagged source keeps the previous always-inject behaviour
+- `nexus context add --tags "..."` and `nexus context tags <name> "<tags>"` — set tags at creation or on an existing source; passing `""` clears them
+- `nexus context list` gains a `TAGS` column, showing `(always)` for untagged sources
+- `live.FilterByQuery` applies the filter in both `nexus query` and chat, so unrelated questions no longer run every registered command or carry irrelevant output into the prompt
+
 **`nexus watch` — move log**
 - Every filed document is appended to `~/.config/nexus/watch-moves.log` as `timestamp | source → dest | status`, including failures, so there is always a plain-text trail of what nexus moved and where
 - `nexus watch --log` prints that history and exits

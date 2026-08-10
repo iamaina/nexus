@@ -12,19 +12,20 @@ type ContextModel struct {
 	DB *pgx.Conn
 }
 
-// Add upserts a context source by name. If the name already exists the command
-// and description are updated in-place, making repeated calls idempotent.
+// Add upserts a context source by name. If the name already exists the command,
+// description, and tags are updated in-place, making repeated calls idempotent.
 // Returns true if the source was newly created, false if it was updated.
-func (m *ContextModel) Add(ctx context.Context, name, command, description string) (created bool, err error) {
+func (m *ContextModel) Add(ctx context.Context, name, command, description, tags string) (created bool, err error) {
 	var id int64
 	err = m.DB.QueryRow(ctx,
-		`INSERT INTO context_sources (name, command, description)
-		 VALUES ($1, $2, $3)
+		`INSERT INTO context_sources (name, command, description, tags)
+		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (name) DO UPDATE
 		     SET command     = EXCLUDED.command,
-		         description = EXCLUDED.description
+		         description = EXCLUDED.description,
+		         tags        = EXCLUDED.tags
 		 RETURNING (xmax = 0) AS inserted, id`,
-		name, command, description,
+		name, command, description, tags,
 	).Scan(&created, &id)
 	if err != nil {
 		return false, fmt.Errorf("add context source %q: %w", name, err)
@@ -32,10 +33,25 @@ func (m *ContextModel) Add(ctx context.Context, name, command, description strin
 	return created, nil
 }
 
+// SetTags updates only the tags for an existing context source by name.
+func (m *ContextModel) SetTags(ctx context.Context, name, tags string) error {
+	tag, err := m.DB.Exec(ctx,
+		`UPDATE context_sources SET tags = $1 WHERE name = $2`,
+		tags, name,
+	)
+	if err != nil {
+		return fmt.Errorf("set tags for %q: %w", name, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("context source %q not found", name)
+	}
+	return nil
+}
+
 // List returns all registered context sources ordered by name.
 func (m *ContextModel) List(ctx context.Context) ([]ContextSource, error) {
 	rows, err := m.DB.Query(ctx,
-		`SELECT id, name, command, COALESCE(description,''), TO_CHAR(created_at,'YYYY-MM-DD HH24:MI')
+		`SELECT id, name, command, COALESCE(description,''), COALESCE(tags,''), TO_CHAR(created_at,'YYYY-MM-DD HH24:MI')
 		 FROM context_sources ORDER BY name`,
 	)
 	if err != nil {
@@ -46,7 +62,7 @@ func (m *ContextModel) List(ctx context.Context) ([]ContextSource, error) {
 	var sources []ContextSource
 	for rows.Next() {
 		var s ContextSource
-		if err := rows.Scan(&s.ID, &s.Name, &s.Command, &s.Description, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Command, &s.Description, &s.Tags, &s.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan context source: %w", err)
 		}
 		sources = append(sources, s)
@@ -72,9 +88,9 @@ func (m *ContextModel) Remove(ctx context.Context, name string) error {
 func (m *ContextModel) Get(ctx context.Context, name string) (*ContextSource, error) {
 	var s ContextSource
 	err := m.DB.QueryRow(ctx,
-		`SELECT id, name, command, COALESCE(description,''), TO_CHAR(created_at,'YYYY-MM-DD HH24:MI')
+		`SELECT id, name, command, COALESCE(description,''), COALESCE(tags,''), TO_CHAR(created_at,'YYYY-MM-DD HH24:MI')
 		 FROM context_sources WHERE name = $1`, name,
-	).Scan(&s.ID, &s.Name, &s.Command, &s.Description, &s.CreatedAt)
+	).Scan(&s.ID, &s.Name, &s.Command, &s.Description, &s.Tags, &s.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, fmt.Errorf("context source %q not found", name)
 	}

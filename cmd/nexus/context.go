@@ -12,6 +12,7 @@ import (
 )
 
 var contextDescription string
+var contextTags string
 
 var contextCmd = &cobra.Command{
 	Use:   "context",
@@ -41,7 +42,7 @@ var contextAddCmd = &cobra.Command{
 			return
 		}
 		name, command := args[0], args[1]
-		created, err := a.ContextSources.Add(ctx, name, command, contextDescription)
+		created, err := a.ContextSources.Add(ctx, name, command, contextDescription, contextTags)
 		if err != nil {
 			logger.Error(ctx, fmt.Sprintf("context add failed: %v", err))
 			return
@@ -53,6 +54,9 @@ var contextAddCmd = &cobra.Command{
 		fmt.Printf("  ✓ %s %q\n    $ %s\n", verb, name, command)
 		if contextDescription != "" {
 			fmt.Printf("    %s\n", contextDescription)
+		}
+		if contextTags != "" {
+			fmt.Printf("    tags: %s\n", contextTags)
 		}
 	},
 }
@@ -90,10 +94,18 @@ var contextListCmd = &cobra.Command{
 }
 
 func printContextList(sources []models.ContextSource) {
-	const maxDesc = 60
-	fmt.Printf("\n  %-16s  %s\n", "NAME", "DESCRIPTION")
-	fmt.Printf("  %-16s  %s\n", "────────────────", "────────────────────────────────────────────────────────────")
+	const maxDesc = 48
+	const maxTags = 28
+	fmt.Printf("\n  %-16s  %-28s  %s\n", "NAME", "TAGS", "DESCRIPTION")
+	fmt.Printf("  %-16s  %-28s  %s\n", "────────────────", "────────────────────────────", "────────────────────────────────────────────────")
 	for _, s := range sources {
+		tags := s.Tags
+		if tags == "" {
+			tags = "(always)"
+		}
+		if len(tags) > maxTags {
+			tags = tags[:maxTags-1] + "…"
+		}
 		desc := s.Description
 		if desc == "" {
 			desc = "—"
@@ -101,7 +113,7 @@ func printContextList(sources []models.ContextSource) {
 		if len(desc) > maxDesc {
 			desc = desc[:maxDesc-1] + "…"
 		}
-		fmt.Printf("  %-16s  %s\n", s.Name, desc)
+		fmt.Printf("  %-16s  %-28s  %s\n", s.Name, tags, desc)
 	}
 	fmt.Println()
 }
@@ -112,11 +124,50 @@ func printContextListVerbose(sources []models.ContextSource) {
 		if desc == "" {
 			desc = "—"
 		}
+		tags := s.Tags
+		if tags == "" {
+			tags = "(always)"
+		}
 		fmt.Printf("  %s\n", s.Name)
 		fmt.Printf("    %s\n", desc)
+		fmt.Printf("    tags:  %s\n", tags)
 		fmt.Printf("    $ %s\n", s.Command)
 		fmt.Printf("    added %s\n\n", s.CreatedAt)
 	}
+}
+
+var contextTagsCmd = &cobra.Command{
+	Use:   "tags <name> <tags>",
+	Short: "Set tags on a context source (comma-separated keywords)",
+	Long: `Set the relevance tags for an existing context source.
+Tags are comma-separated keywords. The source is only injected when the query
+contains at least one matching keyword. An empty string removes all tags and
+restores always-inject behaviour.
+
+Examples:
+  nexus context tags current-repo "git,repo,branch,commit,code,changes"
+  nexus context tags my-issues "issues,tickets,assigned,gitlab,work,tasks"
+  nexus context tags repo-paths ""   # remove tags — always inject`,
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: completeSourceNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := cmd.Context()
+		a, ok := ctx.Value(app.AppKey).(*app.Application)
+		if !ok {
+			logger.Error(ctx, "Application not found in context")
+			return
+		}
+		name, tags := args[0], args[1]
+		if err := a.ContextSources.SetTags(ctx, name, tags); err != nil {
+			logger.Error(ctx, fmt.Sprintf("%v", err))
+			return
+		}
+		if tags == "" {
+			fmt.Printf("  ✓ %q — tags cleared (always inject)\n", name)
+		} else {
+			fmt.Printf("  ✓ %q — tags: %s\n", name, tags)
+		}
+	},
 }
 
 func completeSourceNames(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
@@ -189,7 +240,8 @@ var contextRmCmd = &cobra.Command{
 
 func init() {
 	contextAddCmd.Flags().StringVar(&contextDescription, "description", "", "optional description of what this source provides")
+	contextAddCmd.Flags().StringVar(&contextTags, "tags", "", "comma-separated keywords that trigger this source (empty = always inject)")
 	contextListCmd.Flags().BoolVarP(&contextListVerbose, "verbose", "v", false, "show full command and added date")
-	contextCmd.AddCommand(contextAddCmd, contextListCmd, contextRunCmd, contextRmCmd)
+	contextCmd.AddCommand(contextAddCmd, contextListCmd, contextRunCmd, contextRmCmd, contextTagsCmd)
 	RootCmd.AddCommand(contextCmd)
 }

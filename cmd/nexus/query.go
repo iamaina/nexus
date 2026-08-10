@@ -156,6 +156,7 @@ Since: v0.0.1  (--model added v0.0.2; --no-live, --sources added v0.1.0; --categ
 			if liveErr != nil {
 				logger.Warn(ctx, "Failed to list context sources", slog.Any("err", liveErr))
 			} else if len(liveSources) > 0 {
+				liveSources = live.FilterByQuery(question, liveSources)
 				logger.Debug(ctx, "query.live_start",
 					slog.String("component", "query"),
 					slog.Int("sources", len(liveSources)),

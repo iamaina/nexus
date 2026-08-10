@@ -81,10 +81,13 @@ type SearchFilter struct {
 
 // ContextSource is a registered live context source — a shell command whose
 // output is injected into the query prompt at query time.
+// Tags is a comma-separated list of keywords; when non-empty the source is only
+// injected when the query contains at least one matching keyword.
 type ContextSource struct {
 	ID          int64
 	Name        string
 	Command     string
 	Description string
+	Tags        string // comma-separated; empty = always inject
 	CreatedAt   string
 }

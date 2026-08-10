@@ -388,7 +388,7 @@ See [Live Context](live-context.md) for a full explanation of what this is for.
 Register a new live context source.
 
 ```bash
-nexus context add <name> "<command>" [--description "..."]
+nexus context add <name> "<command>" [--description "..."] [--tags "..."]
 ```
 
 ```bash
@@ -403,23 +403,39 @@ nexus context add prom     "curl -s http://prometheus:9090/api/v1/query?query=up
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` | "" | Human-readable description of what this source provides |
+| `--tags string` | "" | Comma-separated keywords; the source is only injected when the query matches one. Empty means always inject |
 
 The name must be unique. The command runs in a shell (`sh -c`) so pipes, redirects, and environment variables all work.
 
+### `nexus context tags`
+
+Set the relevance tags on an existing source without re-adding it.
+
+```bash
+nexus context tags <name> "<tags>"
+```
+
+```bash
+nexus context tags current-repo "git,repo,branch,commit,code,changes"
+nexus context tags my-issues    "issues,tickets,assigned,work,tasks"
+nexus context tags repo-paths   ""     # remove tags — always inject
+```
+
+**Why tags exist** — an untagged source runs on *every* query, so asking an unrelated question still paid the cost of every registered command and put irrelevant output in the prompt. Tagging scopes a source to the questions it is actually about. Matching is case-insensitive substring against the query; a source with no tags keeps the old always-inject behaviour.
+
 ### `nexus context list`
 
-Show all registered sources.
+Show all registered sources. Untagged sources display as `(always)`.
 
 ```bash
 nexus context list
 ```
 
 ```
-  NAME              COMMAND                                   ADDED
-  ────────────────  ────────────────────────────────────────  ───────────────────
-  kubectl           kubectl get pods -A                       2026-04-06 21:41
-                    all pods across namespaces
-  nodes             kubectl get nodes -o wide                 2026-04-06 21:41
+  NAME              TAGS                          DESCRIPTION
+  ────────────────  ────────────────────────────  ────────────────────────────────
+  kubectl           pods,cluster,k8s              all pods across namespaces
+  nodes             (always)                      node status and IP addresses
 ```
 
 ### `nexus context run`

@@ -21,6 +21,30 @@ type Output struct {
 	Err     error
 }
 
+// FilterByQuery returns the subset of sources that should be injected for the
+// given query. Sources with no tags are always included. Sources with tags are
+// included only when the query contains at least one matching tag (case-insensitive
+// whole-word substring). This keeps unrelated live context out of the prompt
+// without requiring --no-live for every personal or off-topic question.
+func FilterByQuery(query string, sources []models.ContextSource) []models.ContextSource {
+	lower := strings.ToLower(query)
+	var result []models.ContextSource
+	for _, s := range sources {
+		if s.Tags == "" {
+			result = append(result, s)
+			continue
+		}
+		for _, tag := range strings.Split(s.Tags, ",") {
+			tag = strings.TrimSpace(strings.ToLower(tag))
+			if tag != "" && strings.Contains(lower, tag) {
+				result = append(result, s)
+				break
+			}
+		}
+	}
+	return result
+}
+
 // RunAll executes every source concurrently with the given per-command timeout.
 // It always returns a result for every source — errors are captured in Output.Err
 // so the caller can decide how to handle partial failures.
