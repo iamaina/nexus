@@ -38,6 +38,7 @@ nexus          # start a chat session — ask anything in plain English
 | [Commands](docs/commands.md) | Every command and flag with examples |
 | [Live Context](docs/live-context.md) | What `nexus context` is, why it exists, and SRE use cases |
 | [Configuration](docs/configuration.md) | Every config field explained |
+| [Troubleshooting](docs/troubleshooting.md) | Failure modes that have actually been hit, with recovery steps |
 | [Contributing](CONTRIBUTING.md) | Branching model, commit rules, code quality checklist |
 | [Commit Conventions](docs/commit-conventions.md) | Accepted commit types, version bumps, how to squash commits before a PR |
 | [Changelog](CHANGELOG.md) | What changed in each release |
