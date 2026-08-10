@@ -17,6 +17,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Session persistence and `--resume` work unchanged; session file written on every exchange
 - OSC 11 escape sequence no longer leaks into viewport — renderer created once before alt screen opens
 
+**`nexus watch` — move log**
+- Every filed document is appended to `~/.config/nexus/watch-moves.log` as `timestamp | source → dest | status`, including failures, so there is always a plain-text trail of what nexus moved and where
+- `nexus watch --log` prints that history and exits
+
 **`nexus organise` — index health and recovery**
 - `--status [dir]` — read-only coverage report: indexed vs missing by extension; distinguishes un-indexed files (`✗`) from content-identical duplicates (`↪`); defaults to `personal.destDir`
 - `--reindex [dir]` — retry ingestion for files in place but absent from the index; `--dry-run` previews without changes

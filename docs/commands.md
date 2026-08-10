@@ -293,7 +293,7 @@ Four watch modes run in parallel:
 
 | Mode | Trigger | Action |
 |---|---|---|
-| Personal intake | `personal.watchDirs` — file created/written | Classify → move → ingest (3s settle delay) |
+| Personal intake | `personal.watchDirs` — file created/written | Classify → ingest → move (3s settle delay) |
 | Source re-scan | Sources with `watch: true` | Re-ingest new/changed files every 5 minutes |
 | Workspace snapshot | `roots.workspace` — directory created/removed | Regenerate and ingest `dir_structure.md` |
 | Repo detection | `roots.repos[watch: true]` — new directory | Detect newly cloned repositories (10s settle) |
@@ -305,6 +305,15 @@ Supported personal file types: `.pdf`, `.md`, `.txt`.
 | Flag | Default | Description |
 |---|---|---|
 | `--list` | false | Print all configured watchers without starting |
+| `--log` | false | Print the history of files nexus has filed, then exit |
+
+**Move log** — every filed document is appended to `~/.config/nexus/watch-moves.log` as a plain-text line:
+
+```text
+2026-05-06T14:22:03 | ~/Downloads/rabobank-march-2026.pdf → ~/Documents/PersonalDocs/financial/banking/2026-03_Rabobank_Statement.pdf | filed
+```
+
+Failures are recorded too, so a file that was classified but never indexed still leaves a trail. Read it with `nexus watch --log`.
 
 **Running as a background service (recommended):**
 

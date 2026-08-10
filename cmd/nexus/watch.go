@@ -47,6 +47,7 @@ const (
 )
 
 var watchList bool
+var watchLog bool
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
@@ -72,6 +73,11 @@ Since: v0.0.1  (workspace OS layer added v0.1.0)`,
 
 		if watchList {
 			printWatchList(a)
+			return
+		}
+
+		if watchLog {
+			printMoveLog()
 			return
 		}
 
@@ -317,10 +323,15 @@ func processWatchedFile(ctx context.Context, a *app.Application, path string) {
 		logger.Warn(ctx, "Auto-filing failed",
 			slog.String("file", filepath.Base(path)),
 			slog.Any("err", err))
+		appendMoveLog(path, "", "FAILED: "+err.Error())
 		return
 	}
 
 	cl := result.Classification
+	status := "filed"
+	if !result.Ingested {
+		status = "filed (not indexed — no text)"
+	}
 	if result.Ingested {
 		fmt.Printf("  ✓ Filed [%s/%s]: %s\n",
 			cl.DocType, cl.Language, filepath.Base(result.DestPath))
@@ -328,6 +339,36 @@ func processWatchedFile(ctx context.Context, a *app.Application, path string) {
 		fmt.Printf("  ✓ Filed [%s/%s]: %s  ⚠ not indexed (no text extracted — scanned document?)\n",
 			cl.DocType, cl.Language, filepath.Base(result.DestPath))
 	}
+	appendMoveLog(path, result.DestPath, status)
+}
+
+// appendMoveLog appends one line to ~/.config/nexus/watch-moves.log so the
+// user always has a plain-text trail of every file nexus has filed.
+// Format: 2006-01-02T15:04:05 | SOURCE → DEST | STATUS
+func appendMoveLog(src, dst, status string) {
+	home, _ := os.UserHomeDir()
+	logDir := filepath.Join(home, ".config", "nexus")
+	_ = os.MkdirAll(logDir, 0o750)
+	logPath := filepath.Join(logDir, "watch-moves.log")
+
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // fixed path under user's home
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	shortSrc := src
+	if home != "" {
+		shortSrc = strings.Replace(src, home, "~", 1)
+	}
+	shortDst := dst
+	if home != "" && dst != "" {
+		shortDst = strings.Replace(dst, home, "~", 1)
+	}
+
+	line := fmt.Sprintf("%s | %s → %s | %s\n",
+		time.Now().Format(time.RFC3339), shortSrc, shortDst, status)
+	_, _ = f.WriteString(line)
 }
 
 // regenerateWorkspaceSnapshot generates dir_structure.md and ingests it.
@@ -645,7 +686,30 @@ func printWatchList(a *app.Application) {
 	fmt.Println()
 }
 
+// printMoveLog prints the watch-moves.log file so the user can see what nexus
+// has filed and where, without having to know the log file path.
+func printMoveLog() {
+	home, _ := os.UserHomeDir()
+	logPath := filepath.Join(home, ".config", "nexus", "watch-moves.log")
+	data, err := os.ReadFile(logPath) //nolint:gosec // fixed config path
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("No files filed yet — the move log is empty.")
+		} else {
+			fmt.Printf("Cannot read move log: %v\n", err)
+		}
+		return
+	}
+	if len(data) == 0 {
+		fmt.Println("No files filed yet — the move log is empty.")
+		return
+	}
+	fmt.Printf("Filed by nexus watch (~/.config/nexus/watch-moves.log):\n\n")
+	fmt.Print(string(data))
+}
+
 func init() {
 	watchCmd.Flags().BoolVar(&watchList, "list", false, "print configured watchers without starting")
+	watchCmd.Flags().BoolVar(&watchLog, "log", false, "print the history of files nexus has filed")
 	RootCmd.AddCommand(watchCmd)
 }
