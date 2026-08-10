@@ -3,5 +3,6 @@ config.yml
 test/
 .venv/
 .ollama_gen_model
+.ollama_class_model
 .pgpassword
 /nexus
