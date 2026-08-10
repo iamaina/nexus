@@ -21,8 +21,10 @@ type FilingResult struct {
 	Ingested       bool // false if already up to date
 }
 
-// FileAndIngest classifies srcPath, moves it to destBaseDir/<cl.DestDir>/<cl.Filename>.<ext>,
-// then ingests the file into nexus under source "personal".
+// FileAndIngest classifies srcPath, ingests it, then moves it to
+// destBaseDir/<cl.DestDir>/<cl.Filename>.<ext> under source "personal".
+// Ingest runs first so that if the DB is busy the file stays in its original
+// location and is never lost.
 // It is used by both `nexus file` (manual) and `nexus watch` (automatic).
 func FileAndIngest(ctx context.Context, a *app.Application, srcPath string) (*FilingResult, error) {
 	destBaseDir := a.Config.Personal.DestDir
@@ -48,26 +50,34 @@ func FileAndIngest(ctx context.Context, a *app.Application, srcPath string) (*Fi
 	destSubDir := filepath.Join(destBaseDir, cl.DestDir)
 	destPath := filepath.Join(destSubDir, filename+ext)
 
-	// 3. Create destination directory
-	if err := os.MkdirAll(destSubDir, 0o750); err != nil { //nolint:gosec // destSubDir is built from config.DestDir + LLM dest_dir sanitised to lowercase alphanum/hyphens/slashes
-		return nil, fmt.Errorf("create dir %s: %w", destSubDir, err)
-	}
-
-	// 4. Move file
-	if err := moveFile(srcPath, destPath); err != nil {
-		return nil, fmt.Errorf("move file: %w", err)
-	}
-
-	// 5. Ingest
+	// 3. Ingest from original location first — if the DB is busy the file
+	// remains in Downloads/Desktop and nothing is lost.
 	meta := &models.DocMeta{
 		DocType:     cl.DocType,
 		Language:    cl.Language,
 		Institution: cl.Institution,
 		DocDate:     cl.Date,
 	}
-	ingested, err := IngestFile(ctx, a, destPath, "personal", false, meta)
+	ingested, err := IngestFile(ctx, a, srcPath, "personal", false, meta)
 	if err != nil {
 		return nil, fmt.Errorf("ingest: %w", err)
+	}
+
+	// 4. Create destination directory and move now that ingest succeeded.
+	if err := os.MkdirAll(destSubDir, 0o750); err != nil { //nolint:gosec // destSubDir is built from config.DestDir + LLM dest_dir sanitised to lowercase alphanum/hyphens/slashes
+		return nil, fmt.Errorf("create dir %s: %w", destSubDir, err)
+	}
+	if err := moveFile(srcPath, destPath); err != nil {
+		return nil, fmt.Errorf("move file: %w", err)
+	}
+
+	// 5. Update the stored file_path to the final destination so queries
+	// show the correct location, not the temporary intake path.
+	if updateErr := a.Documents.RePoint(ctx, srcPath, destPath); updateErr != nil {
+		logger.Warn(ctx, "filing: could not update stored file path",
+			slog.String("src", srcPath),
+			slog.String("dst", destPath),
+			slog.Any("err", updateErr))
 	}
 
 	return &FilingResult{

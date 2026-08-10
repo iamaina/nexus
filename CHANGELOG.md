@@ -26,6 +26,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `nexus watch` now ingests intake files from their original location and only moves them once ingestion succeeds — previously a failed ingest (busy or unreachable database) left the file already moved out of `~/Downloads`/`~/Desktop` with no record of where it went. The stored `file_path` is re-pointed to the final destination after the move
 - `nexus search` now matches document body text in addition to file path and section headings
 - `nexus organise` and `nexus watch` now warn when `IngestFile` returns no content instead of printing a silent `✓`
 - Duplicate vs no-content files now reported separately in `--reindex` and `--status` output
