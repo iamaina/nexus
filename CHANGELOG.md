@@ -17,6 +17,14 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Session persistence and `--resume` work unchanged; session file written on every exchange
 - OSC 11 escape sequence no longer leaks into viewport — renderer created once before alt screen opens
 
+**Chat — work tracking (`/track`, `/catchup`)**
+- `/catchup` — summarises work-tracking documents into open items, next actions, and blockers; completed items are excluded. Retrieval is by document path (`ChunkModel.FindByDocumentPath`) rather than vector search, so the summary covers every tracked file instead of only those scoring above the relevance threshold
+- `/track create` — generates a filled work-tracking file from the conversation, deriving the filename slug from the generated title. Held pending until `/track confirm`; `/track discard` drops it, so nothing is written to disk without review
+- `/track update` — regenerates the next action and appends journal entries to the file linked to the current session
+- `/track new <slug> <title>` — creates an empty file from `TEMPLATE.md`; `/track <fragment> <note>` appends a one-line note; `/track list` lists all files
+- Session linkage — the chat session name is written into the work-tracking file's Resume section, so a file records which conversation produced it
+- `internal/worktrack` — new package owning work-tracking file discovery, template reads, and structured section updates
+
 **GitLab context — group work items resolve to epics**
 - A group work-item URL (`/groups/<path>/-/work_items/<n>`) is now tried against the epics endpoint before falling back to issues, so pasting an epic link returns the epic instead of failing or resolving to an unrelated issue with the same IID
 

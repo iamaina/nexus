@@ -354,6 +354,41 @@ func (m *ChunkModel) FindByPathOrChapter(ctx context.Context, query, source stri
 	return results, rows.Err()
 }
 
+// FindByDocumentPath returns all chunks from documents whose file_path contains
+// pathFragment (case-insensitive), ordered by ingest_time DESC then chunk_index.
+// Used by /catchup to retrieve work-tracking content without a vector query.
+func (m *ChunkModel) FindByDocumentPath(ctx context.Context, pathFragment string, limit int) ([]Result, error) {
+	rows, err := m.DB.Query(ctx, `
+		SELECT
+			c.document_id,
+			c.chunk_index,
+			COALESCE(c.section_level, 0),
+			d.file_path,
+			COALESCE(c.chapter, '') AS chapter,
+			c.chunk_text
+		FROM chunks c
+		JOIN documents d ON c.document_id = d.id
+		WHERE d.file_path ILIKE '%' || $1 || '%'
+		ORDER BY d.ingest_time DESC, c.chunk_index
+		LIMIT $2`,
+		pathFragment, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.DocumentID, &r.ChunkIndex, &r.Level, &r.File, &r.Chapter, &r.Text); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
 // vectorToString converts a float32 slice into a Postgres vector literal e.g. "[0.1,0.2,...]".
 func vectorToString(vec []float32) string {
 	var sb strings.Builder

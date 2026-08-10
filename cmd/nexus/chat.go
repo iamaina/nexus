@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/iamaina/nexus/internal/logger"
 	"github.com/iamaina/nexus/internal/models"
 	"github.com/iamaina/nexus/internal/summarizer"
+	"github.com/iamaina/nexus/internal/worktrack"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -105,9 +107,69 @@ func startSpinner(label string, tty bool) func() {
 
 // ── Markdown renderer ────────────────────────────────────────────────────────
 
+// paragraphBreak splits on 2 or more consecutive newlines, so blocks never
+// carry leading/trailing blank lines from \n\n\n or \n\n\n\n sequences.
+var paragraphBreak = regexp.MustCompile(`\n{2,}`)
+
+// normalizeProseNewlines fixes LLM-generated line breaks before glamour renders.
+// llama3.x embeds hard newlines at ~80 chars, and sometimes emits \n\n around
+// mid-sentence fragments. Both produce broken lines in the rendered output.
+// Pass 1 collapses single \n to space within prose blocks.
+// Pass 2 merges consecutive prose blocks where the first ends mid-sentence,
+// or the second is a short fragment (< 20 chars, no full stop).
+func normalizeProseNewlines(s string) string {
+	// Split on 2+ newlines so we never get leading \n inside a block (which
+	// strings.Split(s, "\n\n") leaves behind when there are 3+ consecutive newlines).
+	blocks := paragraphBreak.Split(s, -1)
+
+	// Pass 1 — collapse single newlines within each prose block.
+	for i, block := range blocks {
+		if !isProseBlock(block) {
+			continue
+		}
+		blocks[i] = strings.ReplaceAll(block, "\n", " ")
+	}
+
+	// Pass 2 — merge mid-sentence continuations.
+	out := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue // paragraphBreak.Split never produces empty strings, but guard anyway
+		}
+		if len(out) == 0 || !isProseBlock(out[len(out)-1]) || !isProseBlock(block) {
+			out = append(out, block)
+			continue
+		}
+		prevT := out[len(out)-1]
+		lastCh := prevT[len(prevT)-1]
+		midSentence := lastCh != '.' && lastCh != '!' && lastCh != '?' && lastCh != ':' && lastCh != '"'
+		isFragment := len(block) < 20 && !strings.Contains(block, ".")
+		if midSentence || isFragment {
+			out[len(out)-1] = prevT + " " + block
+		} else {
+			out = append(out, block)
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+func isProseBlock(block string) bool {
+	first := strings.TrimSpace(block)
+	return first != "" &&
+		!strings.HasPrefix(first, "```") &&
+		!strings.HasPrefix(first, "    ") &&
+		!strings.HasPrefix(first, "#") &&
+		!strings.HasPrefix(first, "- ") &&
+		!strings.HasPrefix(first, "* ") &&
+		!strings.HasPrefix(first, "+ ") &&
+		!(len(first) > 1 && first[0] >= '1' && first[0] <= '9' && first[1] == '.') //nolint:staticcheck
+}
+
 // renderMarkdown renders markdown text with glamour when tty is true.
 // Falls back to plain indented text on non-tty (piped) output.
 func renderMarkdown(text string, tty bool, cols int) string {
+	text = normalizeProseNewlines(text)
 	if !tty {
 		// Plain indented text for piped output
 		var sb strings.Builder
@@ -211,6 +273,7 @@ func runChatSession(cmd *cobra.Command, resumeSession string) error {
 	var history []summarizer.ChatMessage
 	var sessionPath string
 	var logFile *os.File
+	var ts trackState // work-tracking session linkage
 
 	// ── Header ───────────────────────────────────────────────────────────────
 	// Clear screen on startup so shell history is not immediately visible when
@@ -436,6 +499,21 @@ loop:
 				continue
 			}
 
+			if question == "/catchup" {
+				stop := startSpinner("loading work tracking…", tty)
+				catchupText := renderCatchup(ctx, a, c)
+				stop()
+				fmt.Print(catchupText)
+				continue
+			}
+
+			// ── /track — update work-tracking files ───────────────────────────
+			if rest, ok := strings.CutPrefix(question, "/track"); ok {
+				arg := strings.TrimSpace(rest)
+				handleTrackCommand(ctx, arg, tty, cols, c, sum, history, &ts)
+				continue
+			}
+
 			// ── /resume <name> — load a past session mid-chat ─────────────────
 			if rest, ok := strings.CutPrefix(question, "/resume"); ok {
 				arg := strings.TrimSpace(rest)
@@ -465,6 +543,7 @@ loop:
 					logFile = f
 				}
 				sessionPath = p
+				ts.sessionPath = p
 				history = loaded
 				name := strings.TrimSuffix(filepath.Base(p), ".md")
 				contVis := fmt.Sprintf("Switched to: %s  (%d exchange(s))", name, len(history)/2)
@@ -490,13 +569,25 @@ loop:
 					host := strings.TrimSpace(strings.TrimPrefix(arg, "todos "))
 					glOut = gitlab.FetchTodos(ctx, host)
 					syntheticQ = "Based on my GitLab todos, what should I prioritise and work on next?"
+				case arg == "items":
+					fmt.Print("  Usage: /gl items <group-path|url>\n  e.g.  /gl items gitlab-com/gl-infra/delivery\n        /gl items https://gitlab.com/groups/gitlab-com/gl-infra/-/issues\n\n")
+					continue
 				case strings.HasPrefix(arg, "items "):
 					groupArg := strings.TrimSpace(strings.TrimPrefix(arg, "items "))
 					host, groupPath := gitlab.ParseGroupArg(groupArg)
 					glOut = gitlab.FetchGroupItems(ctx, host, groupPath)
 					syntheticQ = fmt.Sprintf("What is available to pick up in %s? Summarise the open items by priority and suggest where to start.", groupPath)
+				case strings.HasPrefix(arg, "read "):
+					urlArg := strings.TrimSpace(strings.TrimPrefix(arg, "read "))
+					outputs := gitlab.ExtractAndFetch(ctx, urlArg, gitLabHosts(a.Config))
+					if len(outputs) == 0 {
+						fmt.Printf("  ✗ Could not fetch: %q\n  (must be a full GitLab issue / MR / work item URL)\n\n", urlArg)
+						continue
+					}
+					glOut = outputs[0]
+					syntheticQ = "Summarise this issue or MR in plain language: what is the goal, what work is required, and what context from the description is most useful for getting started?"
 				default:
-					fmt.Printf("  Unknown /gl command: %q\n  Available:\n    /gl todos [host]       — your pending todos\n    /gl items <group|url>  — open items in a group\n\n", arg)
+					fmt.Printf("  Unknown /gl command: %q\n  Available:\n    /gl todos [host]       — your pending todos\n    /gl items <group|url>  — open items in a group\n    /gl read <url>         — read a specific issue, MR, or work item\n\n", arg)
 					continue
 				}
 
@@ -611,7 +702,7 @@ loop:
 			if !chatNoLive {
 				liveSources, liveErr := a.ContextSources.List(ctx)
 				if liveErr == nil && len(liveSources) > 0 {
-					liveOutputs = live.RunAll(ctx, liveSources, 5*time.Second)
+					liveOutputs = live.RunAll(ctx, live.FilterByQuery(question, liveSources), 5*time.Second)
 				}
 			}
 			liveOutputs = append(<-glCh, liveOutputs...)
@@ -642,6 +733,19 @@ loop:
 			} else if len(candidates) > 0 {
 				fmt.Printf("  %s(no context above threshold %.2f)%s\n\n",
 					c.dim, threshold, c.reset)
+			}
+
+			// Skip the LLM only when there is truly no context of any kind.
+			// If conversation history is present, the LLM can answer follow-up
+			// questions from that history even with no new search hits.
+			if len(results) == 0 && len(liveOutputs) == 0 && len(history) == 0 {
+				fmt.Printf("  %sI don't have relevant information about this in your knowledge base.%s\n\n", c.dim, c.reset)
+				if len(candidates) > 0 {
+					best := candidates[0]
+					fmt.Printf("  %s(best match scored %.2f — threshold is %.2f; try lowering with --threshold)%s\n\n",
+						c.dim, best.Score, threshold, c.reset)
+				}
+				continue
 			}
 
 			// Generate response — stream to discard, then glamour-render the full answer
@@ -693,6 +797,7 @@ loop:
 				} else {
 					logFile = f
 					sessionPath = path
+					ts.sessionPath = path
 					home, _ := os.UserHomeDir()
 					fmt.Printf("  %sSaving to → %s%s\n\n",
 						c.dim, strings.Replace(path, home, "~", 1), c.reset)
@@ -813,6 +918,7 @@ func buildCompleter(cfg *config.Config) readline.AutoCompleter {
 	return readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
 		readline.PcItem("/status"),
+		readline.PcItem("/catchup"),
 		readline.PcItem("/sessions"),
 		readline.PcItem("/resume", resumeItems...),
 		readline.PcItem("/sources"),
@@ -821,6 +927,13 @@ func buildCompleter(cfg *config.Config) readline.AutoCompleter {
 		readline.PcItem("/gl",
 			readline.PcItem("todos"),
 			readline.PcItem("items"),
+			readline.PcItem("read"),
+		),
+		readline.PcItem("/track",
+			readline.PcItem("list"),
+			readline.PcItem("create"),
+			readline.PcItem("update"),
+			readline.PcItem("new"),
 		),
 	)
 }
@@ -963,6 +1076,7 @@ func renderHelp(c cs) string {
 	cmds := [][2]string{
 		{"/help", "print this reference"},
 		{"/status", "show indexed source counts, default sources, and model health"},
+		{"/catchup", "summarise open and in-progress work from your work-tracking files"},
 		{"/sources", "list every configured source with type, category, and doc count"},
 		{"/sessions", "list the 10 most recent chat sessions"},
 		{"/resume <name>", "switch to a past session mid-chat (tab to complete)"},
@@ -972,6 +1086,14 @@ func renderHelp(c cs) string {
 		{"/category clear", "remove category filter"},
 		{"/gl todos [host]", "fetch your GitLab todos and get prioritisation advice"},
 		{"/gl items <group|url>", "list open items in a group"},
+		{"/gl read <url>", "read a specific issue, MR, or work item"},
+		{"/track list", "list work-tracking files"},
+		{"/track create", "generate a work-tracking file from this conversation"},
+		{"/track confirm", "save the pending generated file and link it to this session"},
+		{"/track discard", "cancel the pending generated file"},
+		{"/track update", "update linked file with new learnings from this conversation"},
+		{"/track new <slug> <title>", "create a blank work-tracking file from template"},
+		{"/track <file> <note>", "append a timestamped note to a work-tracking file"},
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %sSlash commands%s\n\n", c.bold, c.reset)
@@ -984,6 +1106,39 @@ func renderHelp(c cs) string {
 }
 
 func printHelp(c cs) { fmt.Print(renderHelp(c)) }
+
+// renderCatchup queries work-tracking documents from the DB and generates a
+// focused summary of open/in-progress items. Used by both chat paths.
+func renderCatchup(ctx context.Context, a *app.Application, c cs) string {
+	const pathFragment = "work-tracking"
+	const maxChunks = 60
+
+	chunks, err := a.Chunks.FindByDocumentPath(ctx, pathFragment, maxChunks)
+	if err != nil {
+		return fmt.Sprintf("  %s✗ could not query work-tracking: %v%s\n\n", c.dim, err, c.reset)
+	}
+
+	summary, err := a.Summarizer.SummarizeCatchup(ctx, chunks)
+	if err != nil {
+		return fmt.Sprintf("  %s✗ summarize error: %v%s\n\n", c.dim, err, c.reset)
+	}
+
+	tty := isTerminal()
+	cols, _ := termSize()
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %s⚡ work-tracking (%d chunks from %d files)%s\n\n",
+		c.dim, len(chunks), countDistinctDocs(chunks), c.reset)
+	b.WriteString(renderMarkdown(summary, tty, cols))
+	return b.String()
+}
+
+func countDistinctDocs(results []models.Result) int {
+	seen := make(map[int64]bool)
+	for _, r := range results {
+		seen[r.DocumentID] = true
+	}
+	return len(seen)
+}
 
 // renderSources builds the /sources output and returns it as a string.
 // printSources is a thin wrapper that prints to stdout (readline path).
@@ -1305,4 +1460,194 @@ func chatSlug(s string) string {
 		slug = "chat"
 	}
 	return slug
+}
+
+// trackState persists the work-tracking linkage for a readline chat session.
+type trackState struct {
+	file        string // absolute path of linked work-tracking file
+	msgLen      int    // len(history) when file was last synced
+	sessionPath string // nexus session file path, for writing to the Resume section
+}
+
+// findRelatedTrackFile looks for an existing work-tracking file related to
+// the given slug. It checks for an exact filename match first, then falls
+// back to extracting the numeric ID from the slug (e.g. "gl-1755-..." → "1755")
+// and searching for any file whose name contains that ID.
+// Returns the absolute path on a match, empty string otherwise.
+func findRelatedTrackFile(slug string) string {
+	// 1. Exact match.
+	exactPath := filepath.Join(worktrack.Dir(), slug+".md")
+	if _, err := os.Stat(exactPath); err == nil {
+		return exactPath
+	}
+	// 2. Extract numeric ID from the slug (format: {type}-{id}-{rest}).
+	parts := strings.SplitN(slug, "-", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	id := parts[1]
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return "" // not a numeric ID — don't broad-search
+		}
+	}
+	if id == "" {
+		return ""
+	}
+	names, err := worktrack.List()
+	if err != nil {
+		return ""
+	}
+	for _, name := range names {
+		if strings.Contains(name, id) {
+			return filepath.Join(worktrack.Dir(), name+".md")
+		}
+	}
+	return ""
+}
+
+// handleTrackCommand processes /track subcommands.
+// /track list                 — list work-tracking files
+// /track create               — generate file from conversation history (LLM)
+// /track update               — update linked file with new learnings (LLM)
+// /track new <slug> <title>   — create from template
+// /track <file> <note>        — append timestamped note
+func doTrackUpdate(ctx context.Context, tty bool, c cs, sum *summarizer.OllamaSummarizer, history []summarizer.ChatMessage, ts *trackState) {
+	if ts.file == "" {
+		fmt.Printf("  %s✗ No linked file — run /track create first%s\n\n", c.dim, c.reset)
+		return
+	}
+	if len(history) <= ts.msgLen {
+		home, _ := os.UserHomeDir()
+		fmt.Printf("  %s✓ Already up to date:%s %s\n\n", c.dim, c.reset, strings.Replace(ts.file, home, "~", 1))
+		return
+	}
+	data, readErr := os.ReadFile(ts.file) //nolint:gosec // path from resolved session state
+	if readErr != nil {
+		fmt.Printf("  %s✗ %v%s\n\n", c.dim, readErr, c.reset)
+		return
+	}
+	stop := startSpinner("generating update…", tty)
+	nextAction, journalLines, genErr := sum.GenerateWorkTrackUpdate(ctx, history, string(data))
+	stop()
+	if genErr != nil {
+		fmt.Printf("  %s✗ %v%s\n\n", c.dim, genErr, c.reset)
+		return
+	}
+	if writeErr := worktrack.UpdateByPath(ts.file, nextAction, journalLines); writeErr != nil {
+		fmt.Printf("  %s✗ %v%s\n\n", c.dim, writeErr, c.reset)
+		return
+	}
+	ts.msgLen = len(history)
+	if ts.sessionPath != "" {
+		sessionName := strings.TrimSuffix(filepath.Base(ts.sessionPath), ".md")
+		_ = worktrack.UpdateResumeSession(ts.file, sessionName)
+	}
+	home, _ := os.UserHomeDir()
+	fmt.Printf("  %s✓ Updated:%s %s\n\n", c.bold, c.reset, strings.Replace(ts.file, home, "~", 1))
+}
+
+func handleTrackCommand(ctx context.Context, arg string, tty bool, _ int, c cs, sum *summarizer.OllamaSummarizer, history []summarizer.ChatMessage, ts *trackState) {
+	switch {
+	case arg == "create":
+		if len(history) == 0 {
+			fmt.Printf("  %s✗ No conversation yet — ask something first%s\n\n", c.dim, c.reset)
+			return
+		}
+		// Already linked — redirect to update.
+		if ts.file != "" {
+			doTrackUpdate(ctx, tty, c, sum, history, ts)
+			return
+		}
+		tmpl, err := worktrack.ReadTemplate()
+		if err != nil {
+			fmt.Printf("  %s✗ %v%s\n\n", c.dim, err, c.reset)
+			return
+		}
+		stop := startSpinner("generating work-tracking file…", tty)
+		slug, content, genErr := sum.GenerateWorkTrack(ctx, history, tmpl)
+		stop()
+		if genErr != nil {
+			fmt.Printf("  %s✗ %v%s\n\n", c.dim, genErr, c.reset)
+			return
+		}
+		// Before writing, check if a related file already exists (e.g. from a
+		// previous session that lost its linkage, or a slug that differs slightly).
+		if existing := findRelatedTrackFile(slug); existing != "" {
+			ts.file = existing
+			home, _ := os.UserHomeDir()
+			fmt.Printf("  %sFound existing file:%s %s\n  %sUpdating instead of creating a duplicate%s\n\n",
+				c.dim, c.reset, strings.Replace(existing, home, "~", 1), c.dim, c.reset)
+			doTrackUpdate(ctx, tty, c, sum, history, ts)
+			return
+		}
+		dest, writeErr := worktrack.WriteNew(slug, content+"\n")
+		if writeErr != nil {
+			fmt.Printf("  %s✗ %v%s\n\n", c.dim, writeErr, c.reset)
+			return
+		}
+		ts.file = dest
+		ts.msgLen = len(history)
+		if ts.sessionPath != "" {
+			sessionName := strings.TrimSuffix(filepath.Base(ts.sessionPath), ".md")
+			_ = worktrack.UpdateResumeSession(dest, sessionName)
+		}
+		home, _ := os.UserHomeDir()
+		fmt.Printf("  %s✓ Created:%s %s\n  %sLinked to this session%s\n\n",
+			c.bold, c.reset, strings.Replace(dest, home, "~", 1), c.dim, c.reset)
+
+	case arg == "update":
+		if len(history) == 0 {
+			fmt.Printf("  %s✗ No conversation yet — ask something first%s\n\n", c.dim, c.reset)
+			return
+		}
+		doTrackUpdate(ctx, tty, c, sum, history, ts)
+
+	case arg == "" || arg == "list":
+		names, err := worktrack.List()
+		if err != nil {
+			fmt.Printf("  %s✗ %v%s\n\n", c.dim, err, c.reset)
+			return
+		}
+		fmt.Printf("  %sWork-tracking files:%s\n\n", c.bold, c.reset)
+		for _, n := range names {
+			fmt.Printf("  %s%s%s\n", c.dim, n, c.reset)
+		}
+		fmt.Println()
+
+	case strings.HasPrefix(arg, "new "):
+		rest := strings.TrimSpace(strings.TrimPrefix(arg, "new "))
+		// Split into slug (first word) and title (rest)
+		parts := strings.SplitN(rest, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+			fmt.Printf("  %sUsage: /track new <slug> <title>%s\n  e.g. /track new gl-21998-upgrade upgrade praefect pre to 22.04\n\n", c.dim, c.reset)
+			return
+		}
+		slug, title := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		dest, err := worktrack.CreateFromTemplate(slug, title)
+		if err != nil {
+			fmt.Printf("  %s✗ %v%s\n\n", c.dim, err, c.reset)
+			return
+		}
+		home, _ := os.UserHomeDir()
+		short := strings.Replace(dest, home, "~", 1)
+		fmt.Printf("  %s✓ Created:%s %s\n\n", c.bold, c.reset, short)
+
+	default:
+		// /track <file-fragment> <note>
+		parts := strings.SplitN(arg, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+			fmt.Printf("  %sUsage: /track <file-fragment> <note>%s\n  e.g. /track refactor-logrus reviewed the approach, will post review tomorrow\n\n", c.dim, c.reset)
+			return
+		}
+		fileFragment, note := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		dest, err := worktrack.AppendNote(fileFragment, note)
+		if err != nil {
+			fmt.Printf("  %s✗ %v%s\n\n", c.dim, err, c.reset)
+			return
+		}
+		home, _ := os.UserHomeDir()
+		short := strings.Replace(dest, home, "~", 1)
+		fmt.Printf("  %s✓ Note appended to:%s %s\n\n", c.bold, c.reset, short)
+	}
 }

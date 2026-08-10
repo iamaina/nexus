@@ -63,8 +63,22 @@ kill $(cat ~/.config/nexus/nexus.pid)
 | `/gl todos` | Fetch your pending GitLab todos and get a prioritised recommendation |
 | `/gl todos <host>` | Same but for a specific GitLab instance (e.g. `ops.gitlab.net`) |
 | `/gl items <group-path\|url>` | List open work items / issues in a GitLab group |
+| `/catchup` | Summarise your work-tracking files: open and in-progress items, next actions, blockers |
+| `/track` or `/track list` | List all work-tracking files |
+| `/track new <slug> <title>` | Create an empty work-tracking file from `TEMPLATE.md` |
+| `/track <file-fragment> <note>` | Append a one-line note to the matching work-tracking file |
+| `/track create` | Generate a filled work-tracking file from this conversation — shown for review, not yet written |
+| `/track confirm` | Write the pending generated file to disk |
+| `/track discard` | Throw away the pending generated file |
+| `/track update` | Regenerate the next action and add journal entries to this session's linked file |
 
 **Tab completion** — press Tab after `/` to complete slash commands, or after `/source ` to complete source names from your config.
+
+### Work tracking from chat
+
+`/catchup` answers "what was I doing?" — it pulls your work-tracking documents directly by path rather than by vector search, so the summary is complete rather than whatever happened to score above the relevance threshold. Completed items are deliberately excluded; the output is open work, next actions, and blockers.
+
+`/track create` reads the conversation so far and drafts a full work-tracking file, deriving the filename slug from the generated title. Nothing is written until you `/track confirm`, so a bad generation costs nothing — `/track discard` drops it. Once a file is linked to the session, `/track update` re-reads the conversation and appends journal entries plus a refreshed next action, and records the session name in the file's Resume section so the chat can be picked up later.
 
 GitLab URLs pasted anywhere in your question are **auto-fetched** — no slash command needed:
 ```
