@@ -7,6 +7,35 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Retired] — 2026-10-05
+
+The project is retired and the repository archived read-only.
+
+- `repo check` is ported to [opsmith](https://github.com/iamaina/opsmith) as
+  `ops repo check`. The PostgreSQL cache is dropped: it saved roughly one
+  second across 78 repositories and cost a database that had to be running,
+  so every machine restart left the command dead before it parsed its
+  arguments. One filesystem walk now answers all three questions it needs —
+  does this clone exist, which root does a new one belong in, and which
+  subdirectory under it.
+- The port fixed a bug rather than carrying it: `gitlab.com` was listed under
+  two repo roots, so host matching always tied and the first root in the slice
+  won, proposing personal repositories inside the work tree. Placement is now
+  inferred from sibling clones, and where there is no evidence the command
+  prints the candidates and refuses instead of guessing.
+- `ops repo find` is new, answering what `check` never could: remembering a
+  repository but not where it was cloned.
+- `watch` is **dropped, not ported**. Every ingest had failed since at least
+  2026-09-17 with `dedup check: conn busy`, and its launchd agent held a
+  five-second crash loop whose log reached 8.1 GB unnoticed.
+- The `com.nexus.watch` launchd agent is unloaded and removed.
+
+The commit that performed this work is `4abd5f4` on `feat/smart-live-context`,
+which was never merged — the repository was archived first. This entry exists
+because `master` is where anyone looks.
+
+---
+
 ## [Unreleased]
 
 ### Added

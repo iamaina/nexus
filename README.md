@@ -1,5 +1,23 @@
 # nexus
 
+> **Retired, 2026-10-05.** This repository is archived and read-only.
+>
+> The one capability worth keeping — `nexus repo check`, which finds a local
+> clone or works out where a new one belongs — lives on as `ops repo check`
+> in [opsmith](https://github.com/iamaina/opsmith). The port drops the
+> PostgreSQL dependency this version needed just to answer the question, and
+> infers placement from the clones already on disk instead.
+>
+> Everything else was retired on evidence rather than on a whim. `watch` had
+> failed every ingest since 2026-09-17, and its launchd agent spent weeks
+> restarting a binary that died at startup every five seconds, writing a log
+> that reached 8.1 GB before anyone noticed. It was marked "keep, verify" and
+> was never verified; verifying it is what retired it.
+>
+> Kept public because the decision record is the useful part. See `CHANGELOG.md`
+> and `docs/`.
+
+---
 **Local-first personal intelligence layer** — fully offline document filing, search, and Q&A.
 
 No cloud. No subscriptions. No data leaving your machine.
