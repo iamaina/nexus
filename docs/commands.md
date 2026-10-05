@@ -93,7 +93,7 @@ What changed in https://gitlab.com/namespace/project/-/merge_requests/456?
 These work with every command:
 
 ```
---config string     path to config.yaml (default: ~/ops-nexus/nexus/config.yaml)
+--config string     path to config.yaml (default: ~/ops-nexus/personal/repos/github/nexus/config.yaml)
 --threshold float   override relevance threshold for this run (default: from config or 0.70)
 -v, --verbose       show connection and pipeline logs (INFO level)
 ```
@@ -267,7 +267,7 @@ nexus organise --cleanup ~/Documents/PersonalDocs           # delete duplicate o
   Plan for ~/Downloads (3 file(s)):
 
     invoice-april-2026.pdf    →  ~/Documents/PersonalDocs/finance/invoices/2026-04_Canva_Invoice.pdf              [existing]
-    kubernetes-handbook.pdf   →  ~/ops-nexus/intelligence/learnings/Kubernetes/Kubernetes_In_Action.pdf           [existing]
+    kubernetes-handbook.pdf   →  ~/ops-nexus/personal/knowledge/learning/Kubernetes/Kubernetes_In_Action.pdf           [existing]
     bank-statement.pdf        →  ~/Documents/PersonalDocs/finance/bank-statements/2026-03_ABNAMRO_Statement.pdf   [new dir] 
 
   Apply? [Y/n]
@@ -634,19 +634,19 @@ nexus source scan --dry-run   # show discovered groups without modifying config.
 ```
   Discovered 4 repo group(s) not yet in config.yaml:
 
-  [1] ~/ops-nexus/active-ops/gitlab-work/infrastructure/  (28 repos)
+  [1] ~/ops-nexus/work/repos/infrastructure/  (28 repos)
         - delivery                      [gitlab.com/gitlab-com/gl-infra/delivery]
         - charts                        [gitlab.com/gitlab-com/gl-infra/charts]
         ... and 26 more
 
-  [2] ~/ops-nexus/active-ops/gitlab-work/release-deployment/  (5 repos)
+  [2] ~/ops-nexus/work/repos/release-deployment/  (5 repos)
         - deployer                      [ops.gitlab.net/gitlab-com/gl-infra/deployer]
         ...
 
   For each group, enter a source name (Enter = use directory name, '-' = skip):
 
-  ~/ops-nexus/active-ops/gitlab-work/infrastructure/ → [infrastructure]:
-  ~/ops-nexus/active-ops/gitlab-work/release-deployment/ → [release-deployment]:
+  ~/ops-nexus/work/repos/infrastructure/ → [infrastructure]:
+  ~/ops-nexus/work/repos/release-deployment/ → [release-deployment]:
   ...
 
   Apply? [Y/n]
@@ -727,7 +727,7 @@ nexus repo check https://github.com/iamaina/nexus.git
 
 **If found:**
 ```
-  ✅  ~/ops-nexus/active-ops/gitlab-work/infrastructure/delivery
+  ✅  ~/ops-nexus/work/repos/infrastructure/delivery
       Branch: main  |  clean
       Last commit: fix(ci): update pipeline config (2 days ago)
 ```
@@ -737,7 +737,7 @@ nexus repo check https://github.com/iamaina/nexus.git
   ❌  gitlab.com/gl-infra/delivery not found in any registered root.
 
   Suggested location (work root):
-    ~/ops-nexus/active-ops/gitlab-work/infrastructure/delivery  [inferred from gl-infra/* pattern]
+    ~/ops-nexus/work/repos/infrastructure/delivery  [inferred from gl-infra/* pattern]
 
   Clone here? [Y/n]
 ```

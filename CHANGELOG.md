@@ -9,6 +9,34 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Retired
+
+**The project is retired. 2026-10-05.**
+
+- `repo check` — the one capability ADR-0001 §8 marked worth keeping — now
+  lives in opsmith as `ops repo check`. The port drops the Postgres cache:
+  it bought about a second across 78 repositories and cost a database that
+  had to be running, so every machine restart left the command dead at app
+  init. Placement is inferred from the clones on disk instead, which also
+  fixes the root tie this version got wrong — `gitlab.com` matched both
+  roots, so personal repositories were proposed inside `work/repos`.
+- `ops repo find` is new, for the question `check` never answered:
+  remembering a repository but not where it was cloned.
+- `watch` is **dropped, not ported**. Every ingest had failed since at least
+  2026-09-17 with `dedup check: conn busy`, and its launchd agent ran a
+  five-second crash loop whose log reached 8.1 GB unnoticed. ADR-0001 marked
+  it "keep, verify"; verifying it is what retired it.
+- The `com.nexus.watch` launchd agent is unloaded and removed. A scrubbed
+  copy of its plist is in `~/ops-nexus/_archive/nexus/`.
+
+### Security
+
+- The plaintext `PG_PASSWORD` carried in the launchd agent's
+  `EnvironmentVariables` at mode 0644 has been removed, along with its copies
+  in `~/.zshrc` and the gitignored `config.yaml`. It was **never committed** —
+  verified across all 123 commits in this repository. Treat the value as
+  exposed and retire it rather than reusing it.
+
 ### Added
 
 **Chat — bubbletea TUI**

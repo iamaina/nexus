@@ -102,7 +102,7 @@ func Execute() {
 }
 
 func init() {
-	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/ops-nexus/nexus/config.yaml)")
+	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/ops-nexus/personal/repos/github/nexus/config.yaml)")
 	RootCmd.PersistentFlags().Float64Var(&queryThreshold, "threshold", 0, "relevance threshold for query results (overrides config)")
 	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "show connection and pipeline logs (INFO level)")
 	RootCmd.Flags().BoolVarP(&showVersion, "version", "V", false, "show version information")

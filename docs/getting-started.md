@@ -177,7 +177,7 @@ nexus will:
   Plan for ~/Downloads (2 files):
 
     invoice-april-2026.pdf  →  ~/Documents/PersonalDocs/finance/invoices/2026-04_Canva_Invoice.pdf   [existing]
-    k8s-handbook.pdf        →  ~/ops-nexus/intelligence/learnings/Kubernetes/                         [new dir]
+    k8s-handbook.pdf        →  ~/ops-nexus/personal/knowledge/learning/Kubernetes/                         [new dir]
 
   Apply? [Y/n]
 ```

@@ -109,14 +109,14 @@ type Config struct {
 
 // Load reads and parses the config file at cfgPath, expands ~ in paths,
 // resolves ${PG_PASSWORD}, and returns the config. cfgPath may be empty
-// (uses ~/ops-nexus/nexus/config.yaml).
+// (uses ~/ops-nexus/personal/repos/github/nexus/config.yaml).
 func Load(cfgPath string) (*Config, error) {
 	if cfgPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("resolve home dir: %w", err)
 		}
-		cfgPath = filepath.Join(home, "ops-nexus/nexus", "config.yaml")
+		cfgPath = filepath.Join(home, "ops-nexus/personal/repos/github/nexus", "config.yaml")
 	}
 
 	data, err := os.ReadFile(cfgPath) //nolint:gosec // cfgPath is always our controlled config.yaml
